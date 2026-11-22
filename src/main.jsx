@@ -1,0 +1,255 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { LANGS, translator } from './locales.js';
+import { activeStatuses, allowedActions, campusDate, categories, emptyListing, filterListings, listingPayload, places, possessionFor } from './model.js';
+import { connectRepository } from './repository.js';
+import { Art, Button, DateLabel, Field, Heading, ListingCard, ListingDetails, ListingForm, Status } from './listings.jsx';
+import './style.css';
+
+const emptyData = { listings: [], handovers: [], messages: [] };
+const initialFilters = { kind: 'offer', category: '', mode: '', query: '' };
+const actionText = { accept: 'actionAccept', place: 'actionPlace', receive: 'actionReceive', cancel: 'cancelHandover' };
+const backendErrors = { incomplete_config: 'configMissing', listing_unavailable: 'notAvailableNow',
+  past_date: 'futureTime', active_handover: 'activeHandover', listing_locked: 'activeHandover' };
+
+function App() {
+  const [lang, setLanguage] = useState(() => {
+    try { const saved = localStorage.getItem('campus-loop-language'); return LANGS[saved] ? saved : 'en'; } catch { return 'en'; }
+  });
+  const t = useMemo(() => translator(lang), [lang]);
+  const locale = LANGS[lang].date ?? LANGS[lang].html;
+  const [repository, setRepository] = useState(null);
+  const [data, setData] = useState(emptyData);
+  const [page, setPage] = useState({ name: 'discover' });
+  const [filters, setFilters] = useState(initialFilters);
+  const [form, setForm] = useState(null);
+  const [plan, setPlan] = useState({ pickup_date: campusDate(), pickup_time: '', place: 'library' });
+  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const main = useRef(null);
+  const lock = useRef(false);
+
+  function showError(exception, fallback = 'actionError') {
+    setError(backendErrors[exception.message] ?? fallback);
+  }
+
+  async function connect() {
+    setLoading(true);
+    setError('');
+    try {
+      const service = await connectRepository();
+      setData(await service.read());
+      setRepository(service);
+    } catch (exception) { showError(exception, 'loadError'); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { connect(); }, []);
+  useEffect(() => {
+    document.documentElement.lang = LANGS[lang].html;
+    try { localStorage.setItem('campus-loop-language', lang); } catch { /* Language still works in this session. */ }
+  }, [lang]);
+  useEffect(() => { main.current?.focus({ preventScroll: true }); }, [page]);
+
+  function go(name, id, previous) {
+    setPage({ name, id, previous });
+    setCancelOpen(false);
+    setError('');
+    setNotice('');
+    window.scrollTo(0, 0);
+  }
+
+  async function refresh() {
+    if (lock.current || !repository) return;
+    lock.current = true;
+    setSaving(true);
+    setError('');
+    try { setData(await repository.read()); }
+    catch (exception) { showError(exception, 'loadError'); }
+    finally { lock.current = false; setSaving(false); }
+  }
+
+  async function change(write, next, messageKey) {
+    if (lock.current) return;
+    lock.current = true;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await write();
+      next?.(result);
+      if (messageKey) setNotice(messageKey);
+      try { setData(await repository.read()); }
+      catch (exception) { showError(exception, 'loadError'); }
+    } catch (exception) { showError(exception); }
+    finally { lock.current = false; setSaving(false); }
+  }
+
+  function startForm(item) {
+    setForm({ ...emptyListing(), ...item, formMode: item?.pickup_slots?.length ? 'slots' : 'later' });
+    go('post', undefined, item?.id ? page : undefined);
+  }
+  function startPlan(item) {
+    const suggested = item.pickup_slots.find(slot => slot.date >= campusDate());
+    setPlan({ pickup_date: suggested?.date ?? campusDate(), pickup_time: suggested?.start ?? '', place: 'library' });
+    go('plan', item.id, page);
+  }
+
+  const userId = repository?.userId;
+  const item = data.listings.find(row => row.id === page.id);
+  const transfer = data.handovers.find(row => row.id === page.id);
+  const latest = item && data.handovers.find(row => row.listing_id === item.id);
+  const owned = item?.owner_id === userId;
+  const matching = filterListings(data.listings, filters);
+  const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
+  const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
+    : ['reopen', 'reopened'].includes(page.name) ? 'my' : page.name === 'handover' ? 'inbox' : page.name;
+
+  function renderPage() {
+    if (!repository) return <div className="surface stack">{loading ? <p role="status">{t('refreshing')}</p>
+      : <Button onClick={connect}>{t('retry')}</Button>}</div>;
+    switch (page.name) {
+      case 'discover': return <>
+        <section className="hero"><p>{t('campus')}</p><h1>{t('heroTitle')}</h1><p>{t('appIntro')}</p></section>
+        <section className="surface stack" aria-label={t('discover')}>
+          <div className="switcher" role="group" aria-label={t('listingKind')}>
+            {[['offer', 'offers'], ['request', 'requests']].map(([kind, label]) => <button key={kind} type="button" aria-pressed={filters.kind === kind}
+              onClick={() => setFilters(old => ({ ...old, kind }))}>{t(label)}</button>)}
+          </div>
+          <Field label={t('searchLabel')}><input type="search" placeholder={t('search')} value={filters.query}
+            onChange={event => setFilters(old => ({ ...old, query: event.target.value }))} /></Field>
+          <div className="form-columns">
+            <Field label={t('category')}><select value={filters.category} onChange={event => setFilters(old => ({ ...old, category: event.target.value }))}>
+              <option value="">{t('all')}</option>{categories.map(category => <option key={category} value={category}>{t(category)}</option>)}
+            </select></Field>
+            <Field label={t('transferType')}><select value={filters.mode} onChange={event => setFilters(old => ({ ...old, mode: event.target.value }))}>
+              <option value="">{t('any')}</option><option value="free">{t('free')}</option>
+              <option value="sell">{t(filters.kind === 'offer' ? 'forSale' : 'paidRequest')}</option>
+            </select></Field>
+          </div>
+          {(filters.category || filters.mode) && <Button kind="quiet" onClick={() => setFilters(old => ({ ...old, category: '', mode: '' }))}>{t('clearFilters')}</Button>}
+        </section>
+        <div className="section-row"><h2>{t(filters.kind === 'offer' ? 'results' : 'matchingRequests')}</h2><output aria-live="polite">{matching.length}</output></div>
+        {matching.length ? <div className="results">{matching.map(row => <ListingCard key={row.id} item={row} t={t} onOpen={() => go('detail', row.id, page)} />)}</div>
+          : <div className="surface stack"><h2>{t(filters.kind === 'offer' ? 'emptyTitle' : 'requestNoMatch')}</h2><p>{t('emptyText')}</p>
+            <Button kind="secondary" onClick={() => setFilters(old => ({ ...initialFilters, kind: old.kind }))}>{t('browseAll')}</Button></div>}
+      </>;
+      case 'my': {
+        const myListings = data.listings.filter(row => row.owner_id === userId);
+        return <><Heading>{t('listingMine')}</Heading><div className="button-row">
+          {repository.source !== 'scenario' && !myListings.some(row => row.simulated) && <Button kind="secondary" disabled={saving} onClick={() => change(() => repository.seedRecovery())}>{t('loadRecovery')}</Button>}
+          <Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
+        </div>{myListings.length ? <div className="results">{myListings.map(row => <ListingCard key={row.id} item={row} t={t} owner onOpen={() => go('detail', row.id, page)} />)}</div>
+          : <div className="surface"><p>{t('noListings')}</p></div>}</>;
+      }
+      case 'detail':
+        if (!item) return <div className="surface">{t('notAvailableNow')}</div>;
+        return <><Heading note={item.display_name}>{item.title}</Heading><div className="surface stack">
+          <Art item={item} hero /><div className="badges"><Status value={item.status} t={t} />{item.simulated && <span className="badge sample">{t('simulatedData')}</span>}</div>
+          <ListingDetails item={item} t={t} locale={locale} />
+        </div><div className="button-row">
+          {owned && item.status === 'closed' && <Button onClick={() => go('reopen', item.id, page)}>{t('reviewReopen')}</Button>}
+          {owned && item.status === 'available' && !activeStatuses.includes(latest?.status) && !item.simulated && <Button onClick={() => startForm(item)}>{t('editListing')}</Button>}
+          {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled' ? 'previousHandover' : 'viewPlan')}</Button>}
+          {!owned && item.kind === 'request' && <Button onClick={() => startForm({ category: item.category, mode: item.mode })}>{t('offerToRequest')}</Button>}
+          {!owned && !item.simulated && item.kind === 'offer' && !latest && repository.source === 'cloud' && <Button onClick={() => startPlan(item)}>{t('planHandover')}</Button>}
+        </div>{!owned && item.simulated && item.kind === 'offer' && <p className="muted">{t('sampleCannotArrange')}</p>}</>;
+      case 'post': return <ListingForm form={form} setForm={setForm} t={t} onReview={draft => { setForm(draft); go('review', undefined, page); }} />;
+      case 'review': {
+        const payload = listingPayload(form);
+        return <><Heading>{t('reviewTitleWeb')}</Heading><div className="surface stack"><h2>{payload.title}</h2>
+          <ListingDetails item={payload} t={t} locale={locale} />
+        </div><div className="button-row"><Button disabled={saving} onClick={() => change(() => repository.saveListing(form.id ?? null, payload),
+          id => go('detail', id, { name: 'my' }), 'publishedMessage')}>{t(form.id ? 'editSaved' : 'publish')}</Button>
+          <Button kind="secondary" disabled={saving} onClick={() => go('post', undefined, page.previous?.previous)}>{t('editDetails')}</Button></div></>;
+      }
+      case 'plan': return <><Heading note={item?.title}>{t('planHandover')}</Heading><form className="surface stack" onSubmit={event => {
+        event.preventDefault();
+        if (new Date(`${plan.pickup_date}T${plan.pickup_time}:00+08:00`) <= new Date()) { setError('futureTime'); return; }
+        change(() => repository.propose(page.id, plan), id => go('handover', id, { name: 'inbox' }), 'proposedSaved');
+      }}><div className="form-columns">
+        <Field label={t('date')}><input type="date" min={campusDate()} required value={plan.pickup_date} onChange={event => setPlan({ ...plan, pickup_date: event.target.value })} /></Field>
+        <Field label={t('time')}><input type="time" required value={plan.pickup_time} onChange={event => setPlan({ ...plan, pickup_time: event.target.value })} /></Field>
+      </div><Field label={t('location')}><select value={plan.place} onChange={event => setPlan({ ...plan, place: event.target.value })}>
+        {places.map(place => <option value={place} key={place}>{t(place)}</option>)}
+      </select></Field><Button type="submit" disabled={saving || !item}>{t('propose')}</Button></form></>;
+      case 'inbox': return <><Heading>{t('handover')}</Heading><Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
+        <div className="surface stack">{data.handovers.length ? data.handovers.map(row => <button className="conversation" type="button" key={row.id} onClick={() => go('handover', row.id, page)}>
+          <strong>{row.item_title}</strong><Status value={row.status} t={t} />
+        </button>) : <p>{t('noMessages')}</p>}</div></>;
+      case 'handover': {
+        if (!transfer) return <div className="surface">{t('notAvailableNow')}</div>;
+        const messages = data.messages.filter(row => row.handover_id === transfer.id);
+        const actions = allowedActions(transfer, userId);
+        const isActive = activeStatuses.includes(transfer.status);
+        return <><Heading note={t('viewingAs', { role: t(transfer.owner_id === userId ? 'owner' : 'recipient') })}>{transfer.item_title}</Heading>
+          <div className="surface stack"><Status value={transfer.status} t={t} />
+            <p><DateLabel value={transfer.pickup_date} locale={locale} /> · {transfer.pickup_time.slice(0, 5)} · {t(transfer.place)}</p>
+            <div className="button-row">{actions.map(action => <Button key={action} disabled={saving}
+              kind={action === 'cancel' ? 'secondary' : 'primary'} onClick={() => {
+                if (action === 'cancel') setCancelOpen(true);
+                else change(() => repository.changeHandover(transfer.id, action), null, 'changeSaved');
+              }}>{t(actionText[action])}</Button>)}</div>
+            {cancelOpen && <div className="notice stack"><p>{t('cancelAsk')}</p><div className="button-row">
+              <Button kind="secondary" onClick={() => setCancelOpen(false)} disabled={saving}>{t('keepHandover')}</Button>
+              <Button kind="danger" disabled={saving} onClick={() => change(() => repository.changeHandover(transfer.id, 'cancel'), () => setCancelOpen(false), 'changeSaved')}>{t('cancelHandover')}</Button>
+            </div></div>}
+            {transfer.status === 'cancelled' && data.listings.some(row => row.owner_id === userId && row.id === transfer.listing_id && row.status === 'closed')
+              && <Button onClick={() => go('reopen', transfer.listing_id, page)}>{t('reviewReopen')}</Button>}
+          </div>
+          <div className="surface stack"><div className="section-row"><h2>{t(isActive ? 'messages' : 'archived')}</h2>
+            <Button kind="quiet" disabled={saving} onClick={refresh}>{t('refresh')}</Button></div>
+            {messages.length ? messages.map(row => <p className="bubble" key={row.id}><strong>{row.sender_id === userId ? t('you') : t('reply')}</strong>{row.body}</p>) : <p>{t('noChat')}</p>}
+            {isActive && <form className="stack" onSubmit={event => {
+              event.preventDefault(); if (message.trim()) change(() => repository.sendMessage(transfer.id, message.trim()), () => setMessage(''));
+            }}><Field label={t('writeMessage')}><textarea maxLength={600} value={message} onChange={event => setMessage(event.target.value)} required /></Field>
+              <Button type="submit" disabled={saving}>{t('send')}</Button></form>}
+          </div></>;
+      }
+      case 'reopen': {
+        if (!item || !owned || item.status !== 'closed' || !latest) return <div className="surface">{t('notAvailableNow')}</div>;
+        return <><Heading note={item.title}>{t('reviewReopen')}</Heading><div className="notice stack">
+          <strong>{t(latest.placed ? 'retrieveFirst' : 'confirmPossessionTitle')}</strong>
+          <p>{t(latest.placed ? 'retrievalPrompt' : 'confirmPossessionBody', { place: t(latest.place) })}</p>
+        </div><div className="surface"><ListingDetails item={item} t={t} locale={locale} /></div>
+          <div className="button-row"><Button kind="secondary" disabled={saving} onClick={() => go('my')}>{t('keepClosed')}</Button>
+            <Button disabled={saving} onClick={() => change(() => repository.relist(item.id, possessionFor(latest)),
+              () => go('reopened', item.id, { name: 'my' }))}>{t(latest.placed ? 'confirmRetrieved' : 'confirmAndReopen')}</Button></div></>;
+      }
+      case 'reopened': return item && <><Heading note={item.title}>{t('reopenedTitle')}</Heading><div className="surface stack">
+        <Status value={item.status} t={t} /><ListingDetails item={item} t={t} locale={locale} /></div>
+        <div className="button-row"><Button onClick={() => go('my')}>{t('closeView')}</Button>
+          {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t('previousHandover')}</Button>}</div></>;
+      default: return null;
+    }
+  }
+
+  const mode = repository && { local: 'localMode', scenario: 'scenarioMode', cloud: 'cloudMode' }[repository.source];
+  return <div className="app-shell">
+    <header className="topbar">
+      <div className="brand-block"><span className="brand-mark" aria-hidden="true">↻</span><span className="brand">Campus Loop</span></div>
+      <label className="language"><span className="sr-only">{t('language')}</span><select value={lang} onChange={event => setLanguage(event.target.value)}>
+        {Object.entries(LANGS).map(([code, entry]) => <option key={code} value={code} lang={entry.html}>{entry.name}</option>)}
+      </select></label>
+    </header>
+    <main className="workspace stack" ref={main} tabIndex={-1}>
+      <div className="section-row top-line">
+        {!isRoot && <Button kind="quiet" disabled={saving} onClick={() => go(page.previous?.name ?? 'discover', page.previous?.id, page.previous?.previous)}>{t('back')}</Button>}
+        {mode && <p className="mode-label">{t(mode)}</p>}
+      </div>
+      {error && <p className="notice error" role="alert">{t(error)}</p>}
+      <div className="stack" aria-busy={saving}>{renderPage()}</div>
+      <div role="status" className="muted">{notice && t(notice)}</div>
+    </main>
+    {repository && <nav className="bottom-nav" aria-label={t('discover')}>
+      {[['discover', 'discover'], ['post', 'post'], ['inbox', 'handover'], ['my', 'listingMine']].map(([name, label]) => <button type="button" key={name}
+        aria-current={activeTab === name ? 'page' : undefined} disabled={saving} onClick={() => name === 'post' ? startForm() : go(name)}>{t(label)}</button>)}
+    </nav>}
+  </div>;
+}
+
+createRoot(document.getElementById('root')).render(<App />);
