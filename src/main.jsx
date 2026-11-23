@@ -104,15 +104,6 @@ function App() {
     finally { lock.current = false; setSaving(false); }
   }
 
-  function resetRelistingDemo() {
-    change(() => repository.resetRelisting(), handoverId => {
-      if (page.name === 'reopened') go('handover', handoverId, { name: 'inbox' });
-      else if (page.previous?.name === 'reopened') {
-        setPage(current => ({ ...current, previous: { name: 'inbox' } }));
-      }
-    }, 'relistingDemoReset');
-  }
-
   function startForm(item) {
     setForm({ ...emptyListing(), ...item, formMode: item?.pickup_slots?.length ? 'slots' : 'later' });
     go('post', undefined, item?.id ? page : undefined);
@@ -138,7 +129,6 @@ function App() {
   const owned = item?.owner_id === userId;
   const matching = filterListings(data.listings, filters, userId);
   const handoverPractice = repository?.scenario === 'handover';
-  const relistingPractice = repository?.relistingPractice;
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
     : ['handover', 'replyDetails', 'reopen', 'reopened'].includes(page.name) ? 'inbox' : page.name;
@@ -269,11 +259,13 @@ function App() {
         </div>
       </div><Button type="submit" disabled={saving || !item}>{t('propose')}</Button></form></>;
       case 'inbox': return <><Heading>{t('handover')}</Heading><div className="button-row">
-        {!['recovery', 'retrieval'].includes(repository.scenario) && <a className="button secondary button-link" href="?test=retrieval&amp;start=handover">{t('loadRecovery')}</a>}
         <Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
+        {repository.resetRelisting && <Button kind="secondary" disabled={saving} onClick={() =>
+          change(() => repository.resetRelisting(), null, 'relistingDemoReset')}>{t('resetRelistingDemo')}</Button>}
       </div>
         <div className="surface stack">{data.handovers.length ? data.handovers.map(row => <button className="conversation" type="button" key={row.id} onClick={() => go('handover', row.id, page)}>
-          <strong>{row.item_title}</strong><Status value={row.status} t={t} />
+          <strong>{row.item_title}</strong><span className="badges"><Status value={row.status} t={t} />
+            {row.simulated && <span className="badge sample">{t('simulatedData')}</span>}</span>
         </button>) : <p>{t('noMessages')}</p>}</div>
         <section className="surface stack"><h2>{t('openRequestReplies')}</h2>{data.replies.length ? data.replies.map(row =>
           <button className="conversation" type="button" key={row.id} onClick={() => go('replyDetails', row.id, page)}>
@@ -289,7 +281,8 @@ function App() {
         const canRelist = transfer.status === 'cancelled' && transfer.owner_id === userId && latestForItem?.id === transfer.id
           && data.listings.some(row => row.id === transfer.listing_id && row.owner_id === userId && row.status === 'closed');
         return <><Heading note={t('viewingAs', { role: t(transfer.owner_id === userId ? 'owner' : 'recipient') })}>{transfer.item_title}</Heading>
-          <div className="surface stack"><Status value={transfer.status} t={t} />
+          <div className="surface stack"><div className="badges"><Status value={transfer.status} t={t} />
+            {transfer.simulated && <span className="badge sample">{t('simulatedData')}</span>}</div>
             <p><DateLabel value={transfer.pickup_date} locale={locale} /> · {transfer.pickup_time.slice(0, 5)} · {handoverPlaceLabel(transfer.place, t)}</p>
             <div className="button-row">{actions.map(action => <Button key={action} disabled={saving}
               kind={action === 'cancel' ? 'secondary' : 'primary'} onClick={() => {
@@ -353,11 +346,7 @@ function App() {
         {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={goBack}>
           <span aria-hidden="true">←</span>
         </Button>}
-        {(handoverPractice || repository?.scenario === 'reply') && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
-        {relistingPractice ? <div className="button-row practice-tools">
-          <p className="mode-label">{t('relistingPracticeMode')}</p>
-          <Button kind="secondary" disabled={saving} onClick={resetRelistingDemo}>{t('resetRelistingDemo')}</Button>
-        </div> : mode && <p className="mode-label">{t(mode)}</p>}
+        {mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}
       <div className="stack" aria-busy={saving}>{renderPage()}</div>

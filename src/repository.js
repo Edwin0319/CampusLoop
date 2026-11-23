@@ -5,6 +5,43 @@ const storageKey = 'campus-loop-web-v1';
 const guest = 'local-guest';
 const demoOwner = 'demo-owner';
 
+function createRelistingSample(owner, placed) {
+  const listing = sampleListing(owner);
+  const handover = {
+    id: 'sample-handover', listing_id: listing.id, item_title: listing.title, owner_id: owner,
+    recipient_id: null, pickup_date: campusDate(), pickup_time: '18:00', place: 'library', status: 'cancelled',
+    placed, simulated: true, created_at: new Date().toISOString(),
+  };
+  const message = { id: 'sample-message', handover_id: handover.id, sender_id: null,
+    body: 'Demo Rui: I can no longer make the pickup.' };
+  return { listing, handover, message };
+}
+
+function reopenListing(listing, handover, possession) {
+  if (listing?.status !== 'closed' || handover?.status !== 'cancelled' || possession !== possessionFor(handover)) {
+    throw new Error('confirm_possession');
+  }
+  listing.status = 'available';
+}
+
+function withRelistingSample(repository) {
+  const sample = createRelistingSample(repository.userId, true);
+  return {
+    ...repository,
+    async read() {
+      const data = await repository.read();
+      const { listing, handover, message } = structuredClone(sample);
+      return { ...data, listings: [...data.listings, listing], handovers: [handover, ...data.handovers],
+        messages: [...data.messages, message] };
+    },
+    async relist(id, possession) {
+      if (id === sampleId) reopenListing(sample.listing, sample.handover, possession);
+      else await repository.relist(id, possession);
+    },
+    async resetRelisting() { sample.listing.status = 'closed'; },
+  };
+}
+
 function demoRepository(scenario, startItemId, relistingPractice = false) {
   let data = { listings: structuredClone(seedListings), handovers: [], messages: [], replies: [] };
   if (!scenario) {
@@ -15,22 +52,20 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
     if (!scenario) localStorage.setItem(storageKey, JSON.stringify(data));
   }
 
-  function seedRecovery() {
-    if (data.listings.some(row => row.id === sampleId)) return;
-    data.listings.push(sampleListing(guest));
-    data.handovers.unshift({
-      id: 'sample-handover', listing_id: sampleId, item_title: 'Introduction to Algorithms', owner_id: guest,
-      recipient_id: null, pickup_date: campusDate(), pickup_time: '18:00', place: 'library', status: 'cancelled',
-      placed: scenario !== 'recovery', created_at: new Date().toISOString(),
-    });
-    data.messages.push({ id: 'sample-message', handover_id: 'sample-handover', sender_id: null,
-      body: 'Demo Rui: I can no longer make the pickup.' });
-    persist();
+  const recoverySample = ['recovery', 'retrieval'].includes(scenario)
+    ? createRelistingSample(guest, scenario === 'retrieval') : null;
+  if (recoverySample) {
+    const { listing, handover, message } = recoverySample;
+    data.listings.push(listing);
+    data.handovers.unshift(handover);
+    data.messages.push(message);
   }
 
-  if (['recovery', 'retrieval'].includes(scenario)) seedRecovery();
   return {
-    source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId, relistingPractice,
+    source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId,
+    ...(relistingPractice && {
+      async resetRelisting() { recoverySample.listing.status = 'closed'; },
+    }),
     async read() { return structuredClone(data); },
     async sendReply(id, offer) {
       const request = data.listings.find(row => row.id === id && row.kind === 'request' && row.status === 'available'
@@ -83,17 +118,8 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
     async relist(id, possession) {
       const item = data.listings.find(row => row.id === id && row.owner_id === guest);
       const latest = data.handovers.find(row => row.listing_id === id);
-      if (item?.status !== 'closed' || latest?.status !== 'cancelled' || possession !== possessionFor(latest)) {
-        throw new Error('confirm_possession');
-      }
-      item.status = 'available';
+      reopenListing(item, latest, possession);
       persist();
-    },
-    async resetRelisting() {
-      const item = data.listings.find(row => row.id === sampleId);
-      const transfer = data.handovers.find(row => row.listing_id === sampleId);
-      item.status = 'closed';
-      return transfer.id;
     },
     async sendMessage(id, body) {
       const transfer = data.handovers.find(row => row.id === id);
@@ -120,14 +146,14 @@ export async function connectRepository() {
   }
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();
   const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  if (!url && !key) return demoRepository(null);
+  if (!url && !key) return withRelistingSample(demoRepository(null));
   if (!url || !key) throw new Error('incomplete_config');
   const client = createClient(url, key);
   const { session } = unwrap(await client.auth.getSession());
   const user = session?.user ?? unwrap(await client.auth.signInAnonymously()).user;
   if (!user) throw new Error('not_authenticated');
   const call = async (name, args) => unwrap(await client.rpc(name, args));
-  return {
+  return withRelistingSample({
     source: 'cloud', userId: user.id,
     async read() {
       const results = await Promise.all([
@@ -159,5 +185,5 @@ export async function connectRepository() {
     changeHandover: (id, action) => call('change_handover', { handover_id: id, action }),
     relist: (id, possession) => call('relist', { listing_id: id, possession }),
     sendMessage: async (id, body) => unwrap(await client.from('messages').insert({ handover_id: id, sender_id: user.id, body })),
-  };
+  });
 }
