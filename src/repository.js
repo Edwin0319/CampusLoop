@@ -1,9 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
-import { activeStatuses, allowedActions, campusDate, possessionFor, sampleId, sampleListing, seedListings, testModes } from './model.js';
+import { activeStatuses, allowedActions, campusDate, colleges, normalizeCondition, possessionFor, slotEnded, reachable, sampleId, sampleListing, seedListings, testModes } from './model.js';
 
 const storageKey = 'campus-loop-web-v1';
 const guest = 'local-guest';
 const demoOwner = 'demo-owner';
+const demoRequester = 'demo-requester';
+const demoPeerName = 'Demo Kai';
+
+function nextCampusDay() {
+  const day = new Date(`${campusDate()}T12:00:00Z`);
+  day.setUTCDate(day.getUTCDate() + 1);
+  return day.toISOString().slice(0, 10);
+}
 
 function createRelistingSample(owner, placed) {
   const listing = sampleListing(owner);
@@ -22,30 +30,57 @@ function reopenListing(listing, handover, possession) {
     throw new Error('confirm_possession');
   }
   listing.status = 'available';
+  // Pickup times that have already passed are not offered again.
+  listing.pickup_slots = (listing.pickup_slots ?? []).filter(slot => !slotEnded(slot));
 }
+
+const sampleDeletedKey = 'campus-loop-sample-deleted';
 
 function withRelistingSample(repository) {
   const sample = createRelistingSample(repository.userId, true);
+  let sampleDeleted = false;
+  try { sampleDeleted = localStorage.getItem(sampleDeletedKey) === '1'; } catch { /* Browser storage is optional. */ }
+  function setSampleDeleted(value) {
+    sampleDeleted = value;
+    try { if (value) localStorage.setItem(sampleDeletedKey, '1'); else localStorage.removeItem(sampleDeletedKey); }
+    catch { /* The sample stays hidden for this session. */ }
+  }
   return {
     ...repository,
     async read() {
       const data = await repository.read();
+      if (sampleDeleted) return data;
       const { listing, handover, message } = structuredClone(sample);
       return { ...data, listings: [...data.listings, listing], handovers: [handover, ...data.handovers],
         messages: [...data.messages, message] };
     },
     async relist(id, possession) {
-      if (id === sampleId) reopenListing(sample.listing, sample.handover, possession);
-      else await repository.relist(id, possession);
+      if (id === sampleId) {
+        if (sampleDeleted) throw new Error('listing_unavailable');
+        reopenListing(sample.listing, sample.handover, possession);
+      } else await repository.relist(id, possession);
     },
-    async resetRelisting() { sample.listing.status = 'closed'; },
+    async deleteListing(id) {
+      if (id !== sampleId) return repository.deleteListing(id);
+      if (sampleDeleted) throw new Error('listing_unavailable');
+      setSampleDeleted(true);
+    },
+    async resetRelisting() {
+      sample.listing.status = 'closed';
+      setSampleDeleted(false);
+      await repository.resetDemoActivity?.();
+    },
   };
 }
 
 function demoRepository(scenario, startItemId, relistingPractice = false) {
-  let data = { listings: structuredClone(seedListings), handovers: [], messages: [], replies: [] };
+  let data = { listings: structuredClone(seedListings), handovers: [], messages: [], replies: [], profile: { college: '' } };
   if (!scenario) {
     try { data = { ...data, ...JSON.parse(localStorage.getItem(storageKey)) }; } catch { /* Browser storage is optional. */ }
+    // Saved demo data from an earlier version may lack newer sample listings; add them back.
+    const known = new Set(data.listings.map(row => row.id));
+    data.listings.push(...structuredClone(seedListings.filter(row => !known.has(row.id))));
+    for (const row of data.listings) if (row.condition) row.condition = normalizeCondition(row.condition);
   }
 
   function persist() {
@@ -64,12 +99,25 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
   return {
     source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId,
     ...(relistingPractice && {
-      async resetRelisting() { recoverySample.listing.status = 'closed'; },
+      async resetRelisting() {
+        const { listing, handover, message } = recoverySample;
+        listing.status = 'closed';
+        if (!data.listings.includes(listing)) {
+          data.listings.push(listing);
+          data.handovers.unshift(handover);
+          data.messages.push(message);
+        }
+      },
     }),
     async read() { return structuredClone(data); },
+    async setCollege(college) {
+      if (college && !colleges.includes(college)) throw new Error('invalid_college');
+      data.profile = { college: college || '' };
+      persist();
+    },
     async sendReply(id, offer) {
       const request = data.listings.find(row => row.id === id && row.kind === 'request' && row.status === 'available'
-        && row.audience === 'campus' && row.owner_id !== guest);
+        && reachable(row, data.profile.college) && row.owner_id !== guest);
       if (!request) throw new Error('request_unavailable');
       const replyId = crypto.randomUUID();
       data.replies.unshift({ id: replyId, request_id: id, request_title: request.title, requester_name: request.display_name,
@@ -77,42 +125,143 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
       persist();
       return replyId;
     },
+    // Demo only: the simulated requester accepts a reply sent to a sample request.
+    // Demo only: someone wants your offer. A simulated student proposes a time and place.
+    async simulateInterest(id) {
+      const item = data.listings.find(row => row.id === id && row.owner_id === guest && row.kind === 'offer'
+        && row.status === 'available' && row.audience !== 'private');
+      if (scenario || !item || data.handovers.some(row => row.listing_id === id && activeStatuses.includes(row.status))) {
+        throw new Error('listing_unavailable');
+      }
+      const slot = item.pickup_slots.find(row => row.date > campusDate());
+      const transfer = {
+        id: crypto.randomUUID(), listing_id: id, item_title: item.title, owner_id: guest, recipient_id: demoRequester,
+        pickup_date: slot?.date ?? nextCampusDay(), pickup_time: slot?.start ?? '18:00', place: 'library',
+        status: 'proposed', placed: false, simulated: true, created_at: new Date().toISOString(),
+      };
+      data.handovers.unshift(transfer);
+      data.messages.push({ id: crypto.randomUUID(), handover_id: transfer.id, sender_id: demoRequester,
+        body: `${demoPeerName}: Hi! I would like this item. Does this time and place work for you?` });
+      persist();
+      return transfer.id;
+    },
+    // Demo only: someone has the item you asked for. A simulated student replies to your request.
+    async simulateReply(id) {
+      const request = data.listings.find(row => row.id === id && row.owner_id === guest && row.kind === 'request'
+        && row.status === 'available' && row.audience !== 'private');
+      if (scenario || !request) throw new Error('request_unavailable');
+      const replyId = crypto.randomUUID();
+      data.replies.unshift({ id: replyId, request_id: id, request_title: request.title, requester_name: request.display_name,
+        requester_id: guest, sender_id: demoRequester, sender_name: demoPeerName, item_title: request.title,
+        description: `${demoPeerName}: I have one in good condition and can meet on campus.`, condition: 'working', defects: '',
+        mode: request.mode, price: request.mode === 'sell' ? 50 : null, simulated: true });
+      persist();
+      return replyId;
+    },
+    // Demo only: the simulated requester accepts your reply, or you accept a simulated reply to your request.
+    async acceptReply(id) {
+      const reply = data.replies.find(row => row.id === id);
+      const request = reply && data.listings.find(row => row.id === reply.request_id);
+      const allowed = (reply?.sender_id === guest && request?.simulated) || (reply?.requester_id === guest && reply.simulated);
+      if (scenario || !allowed || reply.status === 'accepted') throw new Error('request_unavailable');
+      reply.status = 'accepted';
+      persist();
+    },
+    // Demo only: you choose a time and place; the simulated other person agrees to it.
+    async arrangeReply(id, plan) {
+      const reply = data.replies.find(row => row.id === id && row.status === 'accepted'
+        && (row.sender_id === guest || (row.requester_id === guest && row.simulated)));
+      if (scenario || !reply) throw new Error('request_unavailable');
+      const giving = reply.sender_id === guest;
+      if (data.handovers.some(row => row.reply_id === id && ['proposed', 'confirmed', 'awaiting', 'completed'].includes(row.status))) {
+        throw new Error('active_handover');
+      }
+      const request = data.listings.find(row => row.id === reply.request_id);
+      const transfer = {
+        id: crypto.randomUUID(), listing_id: reply.request_id, reply_id: id, item_title: reply.item_title,
+        owner_id: giving ? guest : demoOwner, recipient_id: giving ? demoRequester : guest, ...plan,
+        status: 'confirmed', placed: false, simulated: true, created_at: new Date().toISOString(),
+      };
+      if (request) request.status = 'reserved';
+      data.handovers.unshift(transfer);
+      persist();
+      return transfer.id;
+    },
+    async withdrawReply(id) {
+      if (!data.replies.some(row => row.id === id && row.sender_id === guest)) throw new Error('request_unavailable');
+      if (data.handovers.some(row => row.reply_id === id)) throw new Error('reply_in_handover');
+      data.replies = data.replies.filter(row => row.id !== id);
+      persist();
+    },
     async saveListing(id, payload) {
       const item = id && data.listings.find(row => row.id === id && row.owner_id === guest);
       if (id && (!item || item.status !== 'available' || data.handovers.some(row => row.listing_id === id && activeStatuses.includes(row.status)))) {
         throw new Error('listing_locked');
       }
+      // Like the database, a college-only post always uses the poster's own college.
+      if (payload.audience === 'college' && !data.profile.college) throw new Error('college_required');
       const row = { id: id ?? crypto.randomUUID(), owner_id: guest, display_name: 'Campus member', status: 'available',
-        art: payload.category === 'study' ? 'books' : payload.category === 'electronics' ? 'keyboard' : 'box', ...payload };
+        art: payload.category === 'study' ? 'books' : payload.category === 'electronics' ? 'keyboard' : 'box', ...payload,
+        college: payload.audience === 'college' ? data.profile.college : null };
       if (item) Object.assign(item, row);
       else data.listings.unshift(row);
       persist();
       return row.id;
     },
+    async deleteListing(id) {
+      const item = data.listings.find(row => row.id === id && row.owner_id === guest);
+      if (!item) throw new Error('listing_unavailable');
+      if (data.handovers.some(row => row.listing_id === id && activeStatuses.includes(row.status))) {
+        throw new Error('listing_locked');
+      }
+      const handoverIds = new Set(data.handovers.filter(row => row.listing_id === id).map(row => row.id));
+      data.listings = data.listings.filter(row => row.id !== id);
+      data.handovers = data.handovers.filter(row => !handoverIds.has(row.id));
+      data.messages = data.messages.filter(row => !handoverIds.has(row.handover_id));
+      data.replies = data.replies.filter(row => row.request_id !== id);
+      persist();
+    },
     async propose(id, plan) {
       const item = data.listings.find(row => row.id === id);
-      if (scenario !== 'handover' || !item?.simulated || item.kind !== 'offer' || item.status !== 'available') {
+      const practiceAllowed = !scenario || scenario === 'handover';
+      if (!practiceAllowed || !item?.simulated || item.owner_id === guest || item.kind !== 'offer' || item.status !== 'available') {
         throw new Error('listing_unavailable');
       }
       const transfer = {
         id: crypto.randomUUID(), listing_id: id, item_title: item.title, owner_id: demoOwner, recipient_id: guest,
-        ...plan, status: 'confirmed', placed: false, created_at: new Date().toISOString(),
+        ...plan, status: 'confirmed', placed: false, simulated: true, created_at: new Date().toISOString(),
       };
       item.status = 'reserved';
       data.handovers.unshift(transfer);
+      persist();
       return transfer.id;
+    },
+    async resetDemoActivity() {
+      const sampleIds = new Set(data.listings.filter(row => row.simulated && row.owner_id === null).map(row => row.id));
+      const demoHandovers = data.handovers.filter(row => row.simulated);
+      const removed = new Set(demoHandovers.map(row => row.id));
+      const touched = new Set(demoHandovers.map(row => row.listing_id));
+      data.handovers = data.handovers.filter(row => !removed.has(row.id));
+      data.messages = data.messages.filter(row => !removed.has(row.handover_id));
+      data.replies = data.replies.filter(row => !row.simulated && !sampleIds.has(row.request_id));
+      // Sample posts and your own posts that took part in a demo handover become available again.
+      for (const row of data.listings) if (sampleIds.has(row.id) || touched.has(row.id)) row.status = 'available';
+      persist();
     },
     async changeHandover(id, action) {
       const transfer = data.handovers.find(row => row.id === id);
-      const simulatesOwner = scenario === 'handover' && action === 'place' && transfer?.owner_id === demoOwner
+      const simulatesOwner = transfer?.simulated && ['hand', 'place'].includes(action) && transfer.owner_id === demoOwner
         && transfer.recipient_id === guest && transfer.status === 'confirmed';
-      if (!simulatesOwner && !allowedActions(transfer, guest).includes(action)) throw new Error('invalid_transition');
+      const simulatesRequester = transfer?.simulated && action === 'receive' && transfer.recipient_id === demoRequester
+        && transfer.owner_id === guest && transfer.status === 'awaiting';
+      if (!simulatesOwner && !simulatesRequester && !allowedActions(transfer, guest).includes(action)) throw new Error('invalid_transition');
       const item = data.listings.find(row => row.id === transfer.listing_id);
-      if (action === 'cancel' && transfer.status !== 'proposed') item.status = 'closed';
+      // Cancelling a reply handover puts the sample request back on the board instead of closing it.
+      if (action === 'cancel' && transfer.status !== 'proposed') item.status = transfer.reply_id ? 'available' : 'closed';
       if (action === 'accept') item.status = 'reserved';
       if (action === 'place') transfer.placed = true;
       if (action === 'receive') item.status = 'completed';
-      transfer.status = { accept: 'confirmed', place: 'awaiting', receive: 'completed', cancel: 'cancelled' }[action];
+      transfer.status = { accept: 'confirmed', hand: 'awaiting', place: 'awaiting', receive: 'completed', cancel: 'cancelled' }[action];
       persist();
     },
     async relist(id, possession) {
@@ -157,30 +306,57 @@ export async function connectRepository() {
     source: 'cloud', userId: user.id,
     async read() {
       const results = await Promise.all([
-        client.from('listings').select('*').eq('status', 'available').eq('audience', 'campus').order('created_at', { ascending: false }).limit(150),
+        client.from('listings').select('*').eq('status', 'available').in('audience', ['campus', 'college']).order('created_at', { ascending: false }).limit(150),
         client.from('listings').select('*').eq('owner_id', user.id).order('created_at', { ascending: false }),
         client.from('handovers').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }),
         client.from('messages').select('*').order('created_at').order('id'),
         client.from('request_replies').select('*').order('created_at', { ascending: false }),
+        client.from('profiles').select('college').eq('user_id', user.id).maybeSingle(),
       ]);
       const [feed, mine, handovers, messages] = results.slice(0, 4).map(unwrap);
       const replyResult = results[4];
       const replies = ['PGRST205', '42P01'].includes(replyResult.error?.code) ? [] : unwrap(replyResult);
-      const listings = [...new Map([...feed, ...mine].map(row => [row.id, row])).values()];
-      return { listings, handovers, messages, replies };
+      // The other participant's listing is no longer in the feed once reserved; load it so both see the same terms.
+      const missing = [...new Set(handovers.map(row => row.listing_id))].filter(id => ![...feed, ...mine].some(row => row.id === id));
+      const shared = missing.length ? (await client.from('listings').select('*').in('id', missing)).data ?? [] : [];
+      const listings = [...new Map([...feed, ...mine, ...shared].map(row => [row.id, row])).values()];
+      // Before the college migration runs there is no profiles table; the app then behaves as if no college was chosen.
+      const profileResult = results[5];
+      const profile = { college: ['PGRST205', '42P01'].includes(profileResult.error?.code) ? '' : unwrap(profileResult)?.college ?? '' };
+      return { listings, handovers, messages, replies, profile };
     },
     async sendReply(id, offer) {
       const result = await client.rpc('send_request_reply', { request_id: id, ...offer });
       if (result.error?.code === 'PGRST202' || result.error?.code === '42P01') throw new Error('request_reply_not_ready');
       return unwrap(result);
     },
+    async withdrawReply(id) {
+      const result = await client.rpc('withdraw_request_reply', { reply_id: id });
+      if (result.error?.code === 'PGRST202') throw new Error('withdraw_not_ready');
+      unwrap(result);
+    },
+    async setCollege(college) {
+      const result = await client.rpc('set_college', { college: college || '' });
+      if (result.error?.code === 'PGRST202') throw new Error('college_not_ready');
+      unwrap(result);
+    },
     async saveListing(id, payload) {
+      if (payload.audience === 'college') {
+        const { error } = await client.from('listings').select('college').limit(0);
+        if (['42703', 'PGRST204'].includes(error?.code)) throw new Error('college_not_ready');
+        if (error) unwrap({ error });
+      }
       if (payload.categories.length > 1 || !['study', 'home', 'electronics'].includes(payload.category)) {
         const { error } = await client.from('listings').select('categories').limit(0);
         if (['42703', 'PGRST204'].includes(error?.code)) throw new Error('categories_not_ready');
         if (error) unwrap({ error });
       }
       return call('save_listing', { listing_id: id, payload });
+    },
+    async deleteListing(id) {
+      const result = await client.rpc('delete_listing', { listing_id: id });
+      if (result.error?.code === 'PGRST202') throw new Error('delete_not_ready');
+      unwrap(result);
     },
     async propose(id, plan) {
       const result = await client.rpc('propose_handover', { listing_id: id, ...plan });
