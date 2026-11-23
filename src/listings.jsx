@@ -36,7 +36,7 @@ export function ListingCard({ item, t, onOpen, owner = false }) {
   return <button type="button" onClick={onOpen} className="listing-card">
     <Art item={item} />
     <div className="item-copy">
-      <h2>{item.title}</h2><p>{t(item.category)} · {item.display_name}</p>
+      <h2>{item.title}</h2><p>{t(item.category)} · {owner ? t('selfDisplay') : item.display_name}</p>
       <div className="badges"><span className="badge">{price(item, t)}</span>
         {owner && <Status value={item.status} t={t} />}{item.simulated && <span className="badge sample">{t('simulatedData')}</span>}
       </div>

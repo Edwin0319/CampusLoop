@@ -53,7 +53,7 @@ function App() {
         const detail = { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } };
         if (service.scenario === 'reply') go('reply', practiceItem.id, detail);
         else startPlan(practiceItem, detail);
-      } else if (service.startAtListings) go('my');
+      } else if (service.startAtHandovers) go('inbox');
     } catch (exception) { showError(exception, 'loadError'); }
     finally { setLoading(false); }
   }
@@ -71,6 +71,11 @@ function App() {
     setError('');
     setNotice('');
     window.scrollTo(0, 0);
+  }
+
+  function goBack() {
+    const previous = page.previous;
+    go(previous?.name ?? 'discover', previous?.id, previous?.previous);
   }
 
   async function refresh() {
@@ -126,7 +131,7 @@ function App() {
   const handoverPractice = repository?.scenario === 'handover';
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
-    : ['reopen', 'reopened'].includes(page.name) ? 'my' : ['handover', 'replyDetails'].includes(page.name) ? 'inbox' : page.name;
+    : ['handover', 'replyDetails', 'reopen', 'reopened'].includes(page.name) ? 'inbox' : page.name;
 
   function renderPage() {
     if (!repository) return <div className="surface stack">{loading ? <p role="status">{t('refreshing')}</p>
@@ -161,20 +166,19 @@ function App() {
       case 'my': {
         const myListings = data.listings.filter(row => row.owner_id === userId);
         return <><Heading>{t('listingMine')}</Heading><div className="button-row">
-          {!['recovery', 'retrieval'].includes(repository.scenario) && <a className="button secondary button-link" href="?test=retrieval&amp;start=my">{t('loadRecovery')}</a>}
           <Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
         </div>{myListings.length ? <div className="results">{myListings.map(row => <ListingCard key={row.id} item={row} t={t} owner onOpen={() => go('detail', row.id, page)} />)}</div>
           : <div className="surface"><p>{t('noListings')}</p></div>}</>;
       }
       case 'detail':
         if (!item) return <div className="surface">{t('notAvailableNow')}</div>;
-        return <><Heading note={item.display_name}>{item.title}</Heading><div className="surface stack">
+        return <><Heading note={owned ? t('selfDisplay') : item.display_name}>{item.title}</Heading><div className="surface stack">
           <Art item={item} hero /><div className="badges"><Status value={item.status} t={t} />{item.simulated && <span className="badge sample">{t('simulatedData')}</span>}</div>
           <ListingDetails item={item} t={t} locale={locale} />
         </div><div className="button-row">
-          {owned && item.status === 'closed' && <Button onClick={() => go('reopen', item.id, page)}>{t('reviewReopen')}</Button>}
           {owned && item.status === 'available' && !activeStatuses.includes(latest?.status) && !item.simulated && <Button onClick={() => startForm(item)}>{t('editListing')}</Button>}
-          {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled' ? 'previousHandover' : 'viewPlan')}</Button>}
+          {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled'
+            ? (item.status === 'closed' ? 'viewCancelledHandover' : 'previousHandover') : 'viewPlan')}</Button>}
           {!owned && item.kind === 'request' && (item.simulated && repository.source === 'cloud'
             ? <a className="button button-link" href={`?test=reply&item=${encodeURIComponent(item.id)}`}>{t('offerToRequest')}</a>
             : <Button onClick={() => go('reply', item.id, page)}>{t('offerToRequest')}</Button>)}
@@ -254,7 +258,10 @@ function App() {
           {places.map(place => <button type="button" key={place} aria-pressed={plan.preset === place} onClick={() => changePlace('', place)}>{t(place)}</button>)}
         </div>
       </div><Button type="submit" disabled={saving || !item}>{t('propose')}</Button></form></>;
-      case 'inbox': return <><Heading>{t('handover')}</Heading><Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
+      case 'inbox': return <><Heading>{t('handover')}</Heading><div className="button-row">
+        {!['recovery', 'retrieval'].includes(repository.scenario) && <a className="button secondary button-link" href="?test=retrieval&amp;start=handover">{t('loadRecovery')}</a>}
+        <Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
+      </div>
         <div className="surface stack">{data.handovers.length ? data.handovers.map(row => <button className="conversation" type="button" key={row.id} onClick={() => go('handover', row.id, page)}>
           <strong>{row.item_title}</strong><Status value={row.status} t={t} />
         </button>) : <p>{t('noMessages')}</p>}</div>
@@ -268,6 +275,9 @@ function App() {
         const actions = allowedActions(transfer, userId);
         if (handoverPractice && transfer.status === 'confirmed') actions.unshift('place');
         const isActive = activeStatuses.includes(transfer.status);
+        const latestForItem = data.handovers.find(row => row.listing_id === transfer.listing_id);
+        const canRelist = transfer.status === 'cancelled' && transfer.owner_id === userId && latestForItem?.id === transfer.id
+          && data.listings.some(row => row.id === transfer.listing_id && row.owner_id === userId && row.status === 'closed');
         return <><Heading note={t('viewingAs', { role: t(transfer.owner_id === userId ? 'owner' : 'recipient') })}>{transfer.item_title}</Heading>
           <div className="surface stack"><Status value={transfer.status} t={t} />
             <p><DateLabel value={transfer.pickup_date} locale={locale} /> · {transfer.pickup_time.slice(0, 5)} · {handoverPlaceLabel(transfer.place, t)}</p>
@@ -280,8 +290,8 @@ function App() {
               <Button kind="secondary" onClick={() => setCancelOpen(false)} disabled={saving}>{t('keepHandover')}</Button>
               <Button kind="danger" disabled={saving} onClick={() => change(() => repository.changeHandover(transfer.id, 'cancel'), () => setCancelOpen(false), 'changeSaved')}>{t('cancelHandover')}</Button>
             </div></div>}
-            {transfer.status === 'cancelled' && data.listings.some(row => row.owner_id === userId && row.id === transfer.listing_id && row.status === 'closed')
-              && <Button onClick={() => go('reopen', transfer.listing_id, page)}>{t('reviewReopen')}</Button>}
+            {canRelist && <div className="stack"><p className="muted">{t('closedText')}</p>
+              <Button onClick={() => go('reopen', transfer.listing_id, page)}>{t('reviewReopen')}</Button></div>}
           </div>
           <div className="surface stack"><div className="section-row"><h2>{t(isActive ? 'messages' : 'archived')}</h2>
             <Button kind="quiet" disabled={saving} onClick={refresh}>{t('refresh')}</Button></div>
@@ -293,19 +303,21 @@ function App() {
           </div></>;
       }
       case 'reopen': {
-        if (!item || !owned || item.status !== 'closed' || !latest) return <div className="surface">{t('notAvailableNow')}</div>;
+        if (!item || !owned || item.status !== 'closed' || latest?.status !== 'cancelled') return <div className="surface">{t('notAvailableNow')}</div>;
         return <><Heading note={item.title}>{t('reviewReopen')}</Heading><div className="notice stack">
           <strong>{t(latest.placed ? 'retrieveFirst' : 'confirmPossessionTitle')}</strong>
           <p>{t(latest.placed ? 'retrievalPrompt' : 'confirmPossessionBody', { place: handoverPlaceLabel(latest.place, t) })}</p>
         </div><div className="surface"><ListingDetails item={item} t={t} locale={locale} /></div>
-          <div className="button-row"><Button kind="secondary" disabled={saving} onClick={() => go('my')}>{t('keepClosed')}</Button>
+          <div className="button-row"><Button kind="secondary" disabled={saving} onClick={goBack}>{t('keepClosed')}</Button>
             <Button disabled={saving} onClick={() => change(() => repository.relist(item.id, possessionFor(latest)),
-              () => go('reopened', item.id, { name: 'my' }))}>{t(latest.placed ? 'confirmRetrieved' : 'confirmAndReopen')}</Button></div></>;
+              () => go('reopened', item.id, page.previous))}>{t(latest.placed ? 'confirmRetrieved' : 'confirmAndReopen')}</Button></div></>;
       }
       case 'reopened': return item && <><Heading note={item.title}>{t('reopenedTitle')}</Heading><div className="surface stack">
         <Status value={item.status} t={t} /><ListingDetails item={item} t={t} locale={locale} /></div>
-        <div className="button-row"><Button onClick={() => go('my')}>{t('closeView')}</Button>
-          {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t('previousHandover')}</Button>}</div></>;
+        <div className="button-row">
+          {latest && <Button onClick={() => go('handover', latest.id, page)}>{t('previousHandover')}</Button>}
+          <Button kind="secondary" onClick={() => go('my')}>{t('listingMine')}</Button>
+        </div></>;
       default: return null;
     }
   }
@@ -328,10 +340,10 @@ function App() {
     </header>
     <main className="workspace stack" ref={main} tabIndex={-1}>
       <div className="section-row top-line">
-        {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={() => go(page.previous?.name ?? 'discover', page.previous?.id, page.previous?.previous)}>
+        {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={goBack}>
           <span aria-hidden="true">←</span>
         </Button>}
-        {(handoverPractice || repository?.scenario === 'reply' || repository?.startAtListings) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
+        {(handoverPractice || repository?.scenario === 'reply' || repository?.startAtHandovers) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
         {mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}

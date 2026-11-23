@@ -46,10 +46,10 @@ Add one of the following queries to the local URL or the GitHub Pages URL. These
 | URL query | Task and success condition |
 | --- | --- |
 | `?test=discovery` | Open **Requests**, search for `desk lamp`, and filter to **Study** and **Free**. Open **Free desk lamp for studying** and verify the requester and terms. |
-| `?test=recovery` | In **My listings**, open **Introduction to Algorithms**. Review the cancelled handover and confirm the book is still with the owner. The listing becomes available and the previous conversation remains accessible. |
+| `?test=recovery` | In **Handover**, open the cancelled handover for **Introduction to Algorithms**. Confirm the book is still with the owner to relist it. The previous conversation remains accessible. |
 | `?test=retrieval` | Repeat the second task with the book at the library pickup point. Keep the listing closed until the scenario states that the book has been retrieved, then reopen it. |
 
-To practise a handover, open a sample offer and select **Try a demo handover**. The simulated owner accepts your proposal. From there you can cancel or simulate the owner handing over the item, then confirm receipt. Under **My listings**, **Try recovery after cancellation** opens a book listing that you can relist after retrieving it. Both practice flows start fresh and keep changes within your browser session.
+To practise a handover, open a sample offer and select **Try a demo handover**. The simulated owner accepts your proposal. From there you can cancel or simulate the owner handing over the item, then confirm receipt. Under **Handover**, **Try recovery after cancellation** opens a cancelled handover. Open the record to see the previous conversation and relist after retrieving the item. Both practice flows start fresh and keep changes within your browser session.
 
 To answer a request, open it and select **I have one to offer**. The reply is linked to that request and is visible only to the two participants in **Handover → Request replies**. In demo mode, the reply stays in your browser.
 
