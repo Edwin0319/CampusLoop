@@ -129,6 +129,7 @@ function App() {
   const owned = item?.owner_id === userId;
   const matching = filterListings(data.listings, filters, userId);
   const handoverPractice = repository?.scenario === 'handover';
+  const relistingPractice = repository?.startAtHandovers;
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
     : ['handover', 'replyDetails', 'reopen', 'reopened'].includes(page.name) ? 'inbox' : page.name;
@@ -343,8 +344,11 @@ function App() {
         {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={goBack}>
           <span aria-hidden="true">←</span>
         </Button>}
-        {(handoverPractice || repository?.scenario === 'reply' || repository?.startAtHandovers) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
-        {mode && <p className="mode-label">{t(mode)}</p>}
+        {(handoverPractice || repository?.scenario === 'reply' || relistingPractice) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
+        {relistingPractice ? <div className="button-row practice-tools">
+          <p className="mode-label">{t('relistingPracticeMode')}</p>
+          <Button kind="secondary" onClick={() => window.location.reload()}>{t('resetRelistingDemo')}</Button>
+        </div> : mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}
       <div className="stack" aria-busy={saving}>{renderPage()}</div>
