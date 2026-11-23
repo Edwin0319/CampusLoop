@@ -89,6 +89,12 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
       item.status = 'available';
       persist();
     },
+    async resetRelisting() {
+      const item = data.listings.find(row => row.id === sampleId);
+      const transfer = data.handovers.find(row => row.listing_id === sampleId);
+      item.status = 'closed';
+      return transfer.id;
+    },
     async sendMessage(id, body) {
       const transfer = data.handovers.find(row => row.id === id);
       if (!transfer || !activeStatuses.includes(transfer.status)) throw new Error('invalid_transition');

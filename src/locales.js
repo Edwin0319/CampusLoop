@@ -96,6 +96,7 @@ Object.assign(COPY, {
   loadRecovery: ['Try the relisting demo', '試用重新刊登功能', '试用重新发布功能', 'Testar a republicação'],
   relistingPracticeMode: ['Relisting demo · Simulated data', '重新刊登示範 · 模擬資料', '重新发布演示 · 模拟数据', 'Demonstração de republicação · Dados simulados'],
   resetRelistingDemo: ['Reset demo', '重置示範', '重置演示', 'Repor demonstração'],
+  relistingDemoReset: ['Introduction to Algorithms is closed again.', '《Introduction to Algorithms》已恢復為關閉狀態。', '《Introduction to Algorithms》已恢复为关闭状态。', 'O anúncio de Introduction to Algorithms foi fechado de novo.'],
   tryDemoHandover: ['Try a demo handover', '試用模擬交收', '试用模拟交接', 'Experimentar uma entrega simulada'],
   handoverPracticeNote: ['Choose a time and place. The simulated owner will accept your proposal.', '選擇時間和地點。模擬物主會接受你的提議。', '选择时间和地点。模拟物主会接受你的提议。', 'Escolha a hora e o local. O proprietário simulado aceitará a sua proposta.'],
   demoAccepted: ['The simulated owner accepted your proposal.', '模擬物主已接受你的提議。', '模拟物主已接受你的提议。', 'O proprietário simulado aceitou a sua proposta.'],

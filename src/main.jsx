@@ -53,10 +53,6 @@ function App() {
         const detail = { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } };
         if (service.scenario === 'reply') go('reply', practiceItem.id, detail);
         else startPlan(practiceItem, detail);
-      } else if (service.relistingPractice) {
-        const cancelled = snapshot.handovers.find(transfer => transfer.status === 'cancelled');
-        if (cancelled) go('handover', cancelled.id, { name: 'inbox' });
-        else go('inbox');
       }
     } catch (exception) { showError(exception, 'loadError'); }
     finally { setLoading(false); }
@@ -106,6 +102,15 @@ function App() {
       catch (exception) { showError(exception, 'loadError'); }
     } catch (exception) { showError(exception); }
     finally { lock.current = false; setSaving(false); }
+  }
+
+  function resetRelistingDemo() {
+    change(() => repository.resetRelisting(), handoverId => {
+      if (page.name === 'reopened') go('handover', handoverId, { name: 'inbox' });
+      else if (page.previous?.name === 'reopened') {
+        setPage(current => ({ ...current, previous: { name: 'inbox' } }));
+      }
+    }, 'relistingDemoReset');
   }
 
   function startForm(item) {
@@ -351,7 +356,7 @@ function App() {
         {(handoverPractice || repository?.scenario === 'reply') && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
         {relistingPractice ? <div className="button-row practice-tools">
           <p className="mode-label">{t('relistingPracticeMode')}</p>
-          <Button kind="secondary" onClick={() => window.location.reload()}>{t('resetRelistingDemo')}</Button>
+          <Button kind="secondary" disabled={saving} onClick={resetRelistingDemo}>{t('resetRelistingDemo')}</Button>
         </div> : mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}
