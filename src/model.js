@@ -1,4 +1,6 @@
-export const categories = ['study', 'home', 'electronics'];
+export const categories = [
+  'study', 'home', 'electronics', 'clothing', 'kitchen', 'furniture', 'sports', 'hobbies', 'transport', 'otherItems',
+];
 export const conditions = ['newCondition', 'good', 'fair', 'unknown'];
 export const places = ['library', 'college', 'studentCentre'];
 export const handoverPlaceLabel = (place, translate) => places.includes(place) ? translate(place) : place;
@@ -28,11 +30,14 @@ export function validSlot(slot) {
 }
 
 const normalize = text => text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().trim().replace(/\s+/g, ' ');
-export function filterListings(rows, { kind, category, mode, query }, viewerId) {
+export const categoriesFor = listing => listing.categories ?? [listing.category];
+
+export function filterListings(rows, { kind, categories: selected = [], mode, query }, viewerId) {
   const terms = normalize(query).split(' ').filter(Boolean);
   return rows.filter(row => {
     if ((viewerId && row.owner_id === viewerId) || row.kind !== kind || row.status !== 'available' || row.audience !== 'campus'
-        || (category && row.category !== category) || (mode && row.mode !== mode)) return false;
+        || (selected.length && !categoriesFor(row).some(category => selected.includes(category)))
+        || (mode && row.mode !== mode)) return false;
     const haystack = normalize([row.title, row.description, row.display_name, row.search_terms].filter(Boolean).join(' '));
     return terms.every(term => haystack.includes(term));
   });
@@ -51,8 +56,9 @@ export const possessionFor = handover => handover?.placed ? 'retrieved' : 'has';
 
 export function listingPayload(form) {
   const offer = form.kind === 'offer';
+  const selected = categoriesFor(form);
   return {
-    kind: form.kind, title: form.title.trim(), description: form.description.trim(), category: form.category,
+    kind: form.kind, title: form.title.trim(), description: form.description.trim(), category: selected[0], categories: selected,
     mode: form.mode, condition: offer ? (form.condition || 'good') : null, defects: offer ? form.defects.trim() : '',
     price: offer && form.mode === 'sell' ? Number(form.price) : null, audience: form.audience,
     pickup_slots: offer ? form.pickup_slots : [], pickup_note: offer ? form.pickup_note.trim() : '',

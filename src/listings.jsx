@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { artSVG } from './art.js';
-import { categories, conditions, emptySlot, validSlot } from './model.js';
+import { categories, categoriesFor, conditions, emptySlot, validSlot } from './model.js';
 
 export function Button({ children, kind = 'primary', ...props }) {
   return <button type="button" className={`button ${kind}`} {...props}>{children}</button>;
@@ -12,6 +12,20 @@ export function Field({ label, children, error }) {
 
 export function Heading({ children, note }) {
   return <header className="section-heading"><h1>{children}</h1>{note && <p>{note}</p>}</header>;
+}
+
+export function CategoryPicker({ label, selected, onChange, error, t }) {
+  return <fieldset className="category-picker" aria-describedby={error ? 'category-error' : undefined}>
+    <legend>{label}</legend>
+    <div className="category-options">
+      {categories.map(category => <label className="category-option" key={category}>
+        <input type="checkbox" name="category" value={category} checked={selected.includes(category)} onChange={event =>
+          onChange(event.target.checked ? [...selected, category] : selected.filter(value => value !== category))} />
+        <span>{t(category)}</span>
+      </label>)}
+    </div>
+    {error && <p className="field-error" role="alert" id="category-error">{error}</p>}
+  </fieldset>;
 }
 
 export function DateLabel({ value, locale }) {
@@ -36,7 +50,7 @@ export function ListingCard({ item, t, onOpen, owner = false }) {
   return <button type="button" onClick={onOpen} className="listing-card">
     <Art item={item} />
     <div className="item-copy">
-      <h2>{item.title}</h2><p>{t(item.category)} · {owner ? t('selfDisplay') : item.display_name}</p>
+      <h2>{item.title}</h2><p>{categoriesFor(item).map(category => t(category)).join(' · ')} · {owner ? t('selfDisplay') : item.display_name}</p>
       <div className="badges"><span className="badge">{price(item, t)}</span>
         {owner && <Status value={item.status} t={t} />}{item.simulated && <span className="badge sample">{t('simulatedData')}</span>}
       </div>
@@ -48,7 +62,7 @@ export function ListingDetails({ item, t, locale }) {
   const isOffer = item.kind === 'offer';
   return <dl className="facts">
     <div><dt>{t('listingKind')}</dt><dd>{t(offerLabel(item))}</dd></div>
-    <div><dt>{t('category')}</dt><dd>{t(item.category)}</dd></div>
+    <div><dt>{t('category')}</dt><dd>{categoriesFor(item).map(category => t(category)).join(' · ')}</dd></div>
     <div><dt>{t('transferType')}</dt><dd>{price(item, t)}</dd></div>
     <div><dt>{t('description')}</dt><dd>{item.description}</dd></div>
     {isOffer && <>
@@ -69,6 +83,7 @@ export function ListingForm({ form, setForm, t, onReview }) {
   const [readingPhoto, setReadingPhoto] = useState(false);
   const dates = useRef(null);
   const offer = form.kind === 'offer';
+  const selectedCategories = categoriesFor(form);
   const set = (name, value) => setForm(current => ({ ...current, [name]: value }));
   const setSlot = (index, field, value) => setForm(current => ({
     ...current, pickup_slots: current.pickup_slots.map((slot, position) => position === index ? { ...slot, [field]: value } : slot),
@@ -99,6 +114,11 @@ export function ListingForm({ form, setForm, t, onReview }) {
       event.currentTarget.querySelector(!form.title.trim() ? '[name="title"]' : '[name="description"]').focus();
       return;
     }
+    if (!selectedCategories.length) {
+      setSubmitted(true);
+      event.currentTarget.querySelector('[name="category"]').focus();
+      return;
+    }
     if (offer && form.formMode === 'slots' && form.pickup_slots.some(slot => !validSlot(slot))) {
       setSubmitted(true);
       dates.current.querySelectorAll('fieldset')[form.pickup_slots.findIndex(slot => !validSlot(slot))].querySelector('input').focus();
@@ -111,23 +131,32 @@ export function ListingForm({ form, setForm, t, onReview }) {
   return <form className="stack" onSubmit={submit}>
     <Heading>{t(form.id ? 'editListing' : 'post')}</Heading>
     <section className="surface stack">
-      <Field label={t('listingKind')}><select value={form.kind} onChange={event => set('kind', event.target.value)}>
-        <option value="offer">{t('offerTitle')}</option><option value="request">{t('requestItem')}</option>
-      </select></Field>
+      <fieldset className="listing-type">
+        <legend>{t('listingKind')}</legend>
+        <div className="listing-type-switch" data-kind={form.kind}>
+          {[['offer', 'offerTitle'], ['request', 'requestItem']].map(([kind, label]) => (
+            <label className="listing-type-option" key={kind}>
+              <input type="radio" name="listing-kind" value={kind} checked={form.kind === kind}
+                onChange={() => set('kind', kind)} />
+              <span>
+                <span className="listing-type-check" aria-hidden="true" />
+                <span>{t(label)}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
       <Field label={t('listingTitle')} error={submitted && !form.title.trim() ? t('required') : null}>
         <input name="title" maxLength={100} value={form.title} onChange={event => set('title', event.target.value)} required />
       </Field>
       <Field label={t('description')} error={submitted && !form.description.trim() ? t('required') : null}>
         <textarea name="description" maxLength={1500} value={form.description} onChange={event => set('description', event.target.value)} required />
       </Field>
-      <div className="form-columns">
-        <Field label={t('category')}><select value={form.category} onChange={event => set('category', event.target.value)}>
-          {categories.map(category => <option key={category} value={category}>{t(category)}</option>)}
-        </select></Field>
-        <Field label={t('transferType')}><select value={form.mode} onChange={event => set('mode', event.target.value)}>
-          <option value="free">{t('free')}</option><option value="sell">{t(offer ? 'forSale' : 'paidRequest')}</option>
-        </select></Field>
-      </div>
+      <CategoryPicker label={t('categoryMultiple')} selected={selectedCategories} t={t} onChange={value => set('categories', value)}
+        error={submitted && !selectedCategories.length ? t('categoryRequired') : null} />
+      <Field label={t('transferType')}><select value={form.mode} onChange={event => set('mode', event.target.value)}>
+        <option value="free">{t('free')}</option><option value="sell">{t(offer ? 'forSale' : 'paidRequest')}</option>
+      </select></Field>
       {offer && <>
         <div className="form-columns">
           <Field label={t('condition')}><select value={form.condition || 'good'} onChange={event => set('condition', event.target.value)}>

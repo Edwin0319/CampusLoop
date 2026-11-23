@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LANGS, translator } from './locales.js';
-import { activeStatuses, allowedActions, campusDate, categories, emptyListing, filterListings, handoverPlaceLabel, listingPayload, places, possessionFor } from './model.js';
+import { activeStatuses, allowedActions, campusDate, emptyListing, filterListings, handoverPlaceLabel, listingPayload, places, possessionFor } from './model.js';
 import { connectRepository } from './repository.js';
-import { Art, Button, DateLabel, Field, Heading, ListingCard, ListingDetails, ListingForm, Status } from './listings.jsx';
+import { Art, Button, CategoryPicker, DateLabel, Field, Heading, ListingCard, ListingDetails, ListingForm, Status } from './listings.jsx';
 import './style.css';
 
 const emptyData = { listings: [], handovers: [], messages: [], replies: [] };
-const initialFilters = { kind: 'offer', category: '', mode: '', query: '' };
+const initialFilters = { kind: 'offer', categories: [], mode: '', query: '' };
 const actionText = { accept: 'actionAccept', place: 'actionPlace', receive: 'actionReceive', cancel: 'cancelHandover' };
 const backendErrors = { incomplete_config: 'configMissing', listing_unavailable: 'notAvailableNow',
   past_date: 'futureTime', active_handover: 'activeHandover', listing_locked: 'activeHandover',
   custom_place_not_ready: 'customPlaceNotReady', request_unavailable: 'requestUnavailable',
-  request_reply_not_ready: 'requestReplyNotReady' };
+  request_reply_not_ready: 'requestReplyNotReady', categories_not_ready: 'categoriesNotReady' };
 
 function App() {
   const [lang, setLanguage] = useState(() => {
@@ -105,7 +105,7 @@ function App() {
   }
 
   function startForm(item) {
-    setForm({ ...emptyListing(), ...item, formMode: item?.pickup_slots?.length ? 'slots' : 'later' });
+    setForm({ ...emptyListing(), ...(item ?? { categories: [] }), formMode: item?.pickup_slots?.length ? 'slots' : 'later' });
     go('post', undefined, item?.id ? page : undefined);
   }
   function startPlan(item, previous = page) {
@@ -147,16 +147,14 @@ function App() {
           </div>
           <Field label={t('searchLabel')}><input type="search" placeholder={t('search')} value={filters.query}
             onChange={event => setFilters(old => ({ ...old, query: event.target.value }))} /></Field>
-          <div className="form-columns">
-            <Field label={t('category')}><select value={filters.category} onChange={event => setFilters(old => ({ ...old, category: event.target.value }))}>
-              <option value="">{t('all')}</option>{categories.map(category => <option key={category} value={category}>{t(category)}</option>)}
-            </select></Field>
-            <Field label={t('transferType')}><select value={filters.mode} onChange={event => setFilters(old => ({ ...old, mode: event.target.value }))}>
-              <option value="">{t('any')}</option><option value="free">{t('free')}</option>
-              <option value="sell">{t(filters.kind === 'offer' ? 'forSale' : 'paidRequest')}</option>
-            </select></Field>
-          </div>
-          {(filters.category || filters.mode) && <Button kind="quiet" onClick={() => setFilters(old => ({ ...old, category: '', mode: '' }))}>{t('clearFilters')}</Button>}
+          <CategoryPicker label={t('category')} selected={filters.categories} t={t}
+            onChange={selected => setFilters(old => ({ ...old, categories: selected }))} />
+          <Field label={t('transferType')}><select value={filters.mode} onChange={event => setFilters(old => ({ ...old, mode: event.target.value }))}>
+            <option value="">{t('any')}</option><option value="free">{t('free')}</option>
+            <option value="sell">{t(filters.kind === 'offer' ? 'forSale' : 'paidRequest')}</option>
+          </select></Field>
+          {(filters.categories.length > 0 || filters.mode) && <Button kind="quiet" onClick={() =>
+            setFilters(old => ({ ...old, categories: [], mode: '' }))}>{t('clearFilters')}</Button>}
         </section>
         <div className="section-row"><h2>{t(filters.kind === 'offer' ? 'results' : 'matchingRequests')}</h2><output aria-live="polite">{matching.length}</output></div>
         {matching.length ? <div className="results">{matching.map(row => <ListingCard key={row.id} item={row} t={t} onOpen={() => go('detail', row.id, page)} />)}</div>

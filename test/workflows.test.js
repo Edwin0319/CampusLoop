@@ -6,12 +6,12 @@ import { emptyListing, filterListings, handoverPlaceLabel, listingPayload, seedL
 
 test('discovery combines a search, category, transfer mode, and visibility', () => {
   const hidden = { ...seedListings.find(item => item.kind === 'request'), id: 'private', audience: 'private' };
-  const rows = filterListings([...seedListings, hidden], { kind: 'request', category: 'study', mode: 'free', query: '  dÉsk  lamp  ' });
+  const rows = filterListings([...seedListings, hidden], { kind: 'request', categories: ['study'], mode: 'free', query: '  dÉsk  lamp  ' });
   assert.deepEqual(rows.map(item => item.title), ['Free desk lamp for studying']);
   for (const kind of ['offer', 'request']) {
     const sample = seedListings.find(item => item.kind === kind);
     const ownPost = { ...sample, id: 'own-post', owner_id: 'student-a', simulated: false };
-    const filters = { kind, category: sample.category, mode: sample.mode, query: sample.title };
+    const filters = { kind, categories: [sample.category], mode: sample.mode, query: sample.title };
     assert.deepEqual(filterListings([ownPost, sample], filters, 'student-a').map(item => item.id), [sample.id]);
     assert.deepEqual(filterListings([ownPost, sample], filters, 'student-b').map(item => item.id), ['own-post', sample.id]);
   }
@@ -49,12 +49,19 @@ test('Postgres enforces handover transitions, editable locations, and private re
     await db.exec(repliesMigration);
     await db.exec(seed);
     await db.exec(seed);
+    const categoriesMigration = await readFile(new URL('../supabase/migrations/202611230003_listing_categories.sql', import.meta.url), 'utf8');
+    await db.exec(categoriesMigration);
+    await db.exec(categoriesMigration);
     await as(owner);
     assert.equal((await query('select id from public.listings')).length, 7);
 
-    const payload = listingPayload({ ...emptyListing(), title: 'Test chair', description: 'Good for study',
+    const payload = listingPayload({ ...emptyListing(), title: 'Test chair', description: 'Good for study', categories: ['furniture', 'study', 'otherItems'],
       pickup_slots: [{ date: '2030-01-01', start: '18:00', end: '20:00' }], pickup_note: 'One day notice' });
     const [{ id }] = await query('select public.save_listing(null, $1::jsonb) as id', [JSON.stringify(payload)]);
+    const [savedListing] = await query('select category, categories from public.listings where id = $1', [id]);
+    assert.deepEqual(savedListing, { category: 'furniture', categories: ['furniture', 'study', 'otherItems'] });
+    assert.equal(filterListings([{ ...payload, status: 'available' }], { kind: 'offer', categories: ['kitchen', 'otherItems'], query: '' }).length, 1);
+    await assert.rejects(query('select public.save_listing(null, $1::jsonb)', [JSON.stringify({ ...payload, categories: ['furniture', 'invalid'] })]), /listings_categories_check/);
     const [{ id: privateId }] = await query('select public.save_listing(null, $1::jsonb) as id', [JSON.stringify({ ...payload, audience: 'private' })]);
 
     await as(recipient);

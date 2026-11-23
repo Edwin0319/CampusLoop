@@ -174,7 +174,14 @@ export async function connectRepository() {
       if (result.error?.code === 'PGRST202' || result.error?.code === '42P01') throw new Error('request_reply_not_ready');
       return unwrap(result);
     },
-    saveListing: (id, payload) => call('save_listing', { listing_id: id, payload }),
+    async saveListing(id, payload) {
+      if (payload.categories.length > 1 || !['study', 'home', 'electronics'].includes(payload.category)) {
+        const { error } = await client.from('listings').select('categories').limit(0);
+        if (['42703', 'PGRST204'].includes(error?.code)) throw new Error('categories_not_ready');
+        if (error) unwrap({ error });
+      }
+      return call('save_listing', { listing_id: id, payload });
+    },
     async propose(id, plan) {
       const result = await client.rpc('propose_handover', { listing_id: id, ...plan });
       if (result.error?.code === '23514' && result.error.message.includes('"handovers_place_check"')) {
