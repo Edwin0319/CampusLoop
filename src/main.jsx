@@ -42,8 +42,12 @@ function App() {
     setError('');
     try {
       const service = await connectRepository();
-      setData(await service.read());
+      const snapshot = await service.read();
+      setData(snapshot);
       setRepository(service);
+      const practiceItem = snapshot.listings.find(row => row.id === service.startItemId);
+      if (practiceItem) startPlan(practiceItem, { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } });
+      else if (service.startAtListings) go('my');
     } catch (exception) { showError(exception, 'loadError'); }
     finally { setLoading(false); }
   }
@@ -93,10 +97,10 @@ function App() {
     setForm({ ...emptyListing(), ...item, formMode: item?.pickup_slots?.length ? 'slots' : 'later' });
     go('post', undefined, item?.id ? page : undefined);
   }
-  function startPlan(item) {
+  function startPlan(item, previous = page) {
     const suggested = item.pickup_slots.find(slot => slot.date >= campusDate());
     setPlan({ pickup_date: suggested?.date ?? campusDate(), pickup_time: suggested?.start ?? '', place: 'library' });
-    go('plan', item.id, page);
+    go('plan', item.id, previous);
   }
 
   const userId = repository?.userId;
@@ -105,13 +109,15 @@ function App() {
   const latest = item && data.handovers.find(row => row.listing_id === item.id);
   const owned = item?.owner_id === userId;
   const matching = filterListings(data.listings, filters);
+  const handoverPractice = repository?.scenario === 'handover';
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
     : ['reopen', 'reopened'].includes(page.name) ? 'my' : page.name === 'handover' ? 'inbox' : page.name;
 
   function renderPage() {
     if (!repository) return <div className="surface stack">{loading ? <p role="status">{t('refreshing')}</p>
-      : <Button onClick={connect}>{t('retry')}</Button>}</div>;
+      : <div className="button-row"><Button onClick={connect}>{t('retry')}</Button>
+        <a className="button secondary button-link" href="?test=handover">{t('tryDemoHandover')}</a></div>}</div>;
     switch (page.name) {
       case 'discover': return <>
         <section className="hero"><p>{t('campus')}</p><h1>{t('heroTitle')}</h1><p>{t('appIntro')}</p></section>
@@ -141,7 +147,7 @@ function App() {
       case 'my': {
         const myListings = data.listings.filter(row => row.owner_id === userId);
         return <><Heading>{t('listingMine')}</Heading><div className="button-row">
-          {repository.source !== 'scenario' && !myListings.some(row => row.simulated) && <Button kind="secondary" disabled={saving} onClick={() => change(() => repository.seedRecovery())}>{t('loadRecovery')}</Button>}
+          {!['recovery', 'retrieval'].includes(repository.scenario) && <a className="button secondary button-link" href="?test=retrieval&amp;start=my">{t('loadRecovery')}</a>}
           <Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
         </div>{myListings.length ? <div className="results">{myListings.map(row => <ListingCard key={row.id} item={row} t={t} owner onOpen={() => go('detail', row.id, page)} />)}</div>
           : <div className="surface"><p>{t('noListings')}</p></div>}</>;
@@ -157,7 +163,10 @@ function App() {
           {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled' ? 'previousHandover' : 'viewPlan')}</Button>}
           {!owned && item.kind === 'request' && <Button onClick={() => startForm({ category: item.category, mode: item.mode })}>{t('offerToRequest')}</Button>}
           {!owned && !item.simulated && item.kind === 'offer' && !latest && repository.source === 'cloud' && <Button onClick={() => startPlan(item)}>{t('planHandover')}</Button>}
-        </div>{!owned && item.simulated && item.kind === 'offer' && <p className="muted">{t('sampleCannotArrange')}</p>}</>;
+          {!owned && item.simulated && item.kind === 'offer' && !latest && item.status === 'available' && (handoverPractice
+            ? <Button onClick={() => startPlan(item)}>{t('tryDemoHandover')}</Button>
+            : <a className="button button-link" href={`?test=handover&item=${encodeURIComponent(item.id)}`}>{t('tryDemoHandover')}</a>)}
+        </div></>;
       case 'post': return <ListingForm form={form} setForm={setForm} t={t} onReview={draft => { setForm(draft); go('review', undefined, page); }} />;
       case 'review': {
         const payload = listingPayload(form);
@@ -167,10 +176,13 @@ function App() {
           id => go('detail', id, { name: 'my' }), 'publishedMessage')}>{t(form.id ? 'editSaved' : 'publish')}</Button>
           <Button kind="secondary" disabled={saving} onClick={() => go('post', undefined, page.previous?.previous)}>{t('editDetails')}</Button></div></>;
       }
-      case 'plan': return <><Heading note={item?.title}>{t('planHandover')}</Heading><form className="surface stack" onSubmit={event => {
+      case 'plan': return <><Heading note={item?.title}>{t('planHandover')}</Heading>
+        {handoverPractice && <p className="muted">{t('handoverPracticeNote')}</p>}
+        <form className="surface stack" onSubmit={event => {
         event.preventDefault();
         if (new Date(`${plan.pickup_date}T${plan.pickup_time}:00+08:00`) <= new Date()) { setError('futureTime'); return; }
-        change(() => repository.propose(page.id, plan), id => go('handover', id, { name: 'inbox' }), 'proposedSaved');
+        change(() => repository.propose(page.id, plan), id => go('handover', id, { name: 'inbox' }),
+          handoverPractice ? 'demoAccepted' : 'proposedSaved');
       }}><div className="form-columns">
         <Field label={t('date')}><input type="date" min={campusDate()} required value={plan.pickup_date} onChange={event => setPlan({ ...plan, pickup_date: event.target.value })} /></Field>
         <Field label={t('time')}><input type="time" required value={plan.pickup_time} onChange={event => setPlan({ ...plan, pickup_time: event.target.value })} /></Field>
@@ -185,6 +197,7 @@ function App() {
         if (!transfer) return <div className="surface">{t('notAvailableNow')}</div>;
         const messages = data.messages.filter(row => row.handover_id === transfer.id);
         const actions = allowedActions(transfer, userId);
+        if (handoverPractice && transfer.status === 'confirmed') actions.unshift('place');
         const isActive = activeStatuses.includes(transfer.status);
         return <><Heading note={t('viewingAs', { role: t(transfer.owner_id === userId ? 'owner' : 'recipient') })}>{transfer.item_title}</Heading>
           <div className="surface stack"><Status value={transfer.status} t={t} />
@@ -193,7 +206,7 @@ function App() {
               kind={action === 'cancel' ? 'secondary' : 'primary'} onClick={() => {
                 if (action === 'cancel') setCancelOpen(true);
                 else change(() => repository.changeHandover(transfer.id, action), null, 'changeSaved');
-              }}>{t(actionText[action])}</Button>)}</div>
+              }}>{t(handoverPractice && action === 'place' ? 'simulateOwnerHandover' : actionText[action])}</Button>)}</div>
             {cancelOpen && <div className="notice stack"><p>{t('cancelAsk')}</p><div className="button-row">
               <Button kind="secondary" onClick={() => setCancelOpen(false)} disabled={saving}>{t('keepHandover')}</Button>
               <Button kind="danger" disabled={saving} onClick={() => change(() => repository.changeHandover(transfer.id, 'cancel'), () => setCancelOpen(false), 'changeSaved')}>{t('cancelHandover')}</Button>
@@ -232,13 +245,22 @@ function App() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand-block"><span className="brand-mark" aria-hidden="true">↻</span><span className="brand">Campus Loop</span></div>
-      <label className="language"><span className="sr-only">{t('language')}</span><select value={lang} onChange={event => setLanguage(event.target.value)}>
-        {Object.entries(LANGS).map(([code, entry]) => <option key={code} value={code} lang={entry.html}>{entry.name}</option>)}
-      </select></label>
+      <label className="language">
+        <span className="language-globe" aria-hidden="true" />
+        <span className="language-text">
+          <span id="language-label" className="language-label">{t('language')}</span>
+          <span className="language-current" aria-hidden="true">{LANGS[lang].name}</span>
+        </span>
+        <span className="language-chevron" aria-hidden="true" />
+        <select aria-labelledby="language-label" value={lang} onChange={event => setLanguage(event.target.value)}>
+          {Object.entries(LANGS).map(([code, entry]) => <option key={code} value={code} lang={entry.html}>{entry.name}</option>)}
+        </select>
+      </label>
     </header>
     <main className="workspace stack" ref={main} tabIndex={-1}>
       <div className="section-row top-line">
         {!isRoot && <Button kind="quiet" disabled={saving} onClick={() => go(page.previous?.name ?? 'discover', page.previous?.id, page.previous?.previous)}>{t('back')}</Button>}
+        {(handoverPractice || repository?.startAtListings) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
         {mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}

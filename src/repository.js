@@ -3,8 +3,9 @@ import { activeStatuses, allowedActions, campusDate, possessionFor, sampleId, sa
 
 const storageKey = 'campus-loop-web-v1';
 const guest = 'local-guest';
+const demoOwner = 'demo-owner';
 
-function demoRepository(scenario) {
+function demoRepository(scenario, startItemId, startAtListings = false) {
   let data = { listings: structuredClone(seedListings), handovers: [], messages: [] };
   if (!scenario) {
     try { data = JSON.parse(localStorage.getItem(storageKey)) ?? data; } catch { /* Browser storage is optional. */ }
@@ -29,9 +30,8 @@ function demoRepository(scenario) {
 
   if (['recovery', 'retrieval'].includes(scenario)) seedRecovery();
   return {
-    source: scenario ? 'scenario' : 'local', userId: guest,
+    source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId, startAtListings,
     async read() { return structuredClone(data); },
-    async seedRecovery() { seedRecovery(); },
     async saveListing(id, payload) {
       const item = id && data.listings.find(row => row.id === id && row.owner_id === guest);
       if (id && (!item || item.status !== 'available' || data.handovers.some(row => row.listing_id === id && activeStatuses.includes(row.status)))) {
@@ -44,10 +44,24 @@ function demoRepository(scenario) {
       persist();
       return row.id;
     },
-    async propose() { throw new Error('cloud_required'); },
+    async propose(id, plan) {
+      const item = data.listings.find(row => row.id === id);
+      if (scenario !== 'handover' || !item?.simulated || item.kind !== 'offer' || item.status !== 'available') {
+        throw new Error('listing_unavailable');
+      }
+      const transfer = {
+        id: crypto.randomUUID(), listing_id: id, item_title: item.title, owner_id: demoOwner, recipient_id: guest,
+        ...plan, status: 'confirmed', placed: false, created_at: new Date().toISOString(),
+      };
+      item.status = 'reserved';
+      data.handovers.unshift(transfer);
+      return transfer.id;
+    },
     async changeHandover(id, action) {
       const transfer = data.handovers.find(row => row.id === id);
-      if (!allowedActions(transfer, guest).includes(action)) throw new Error('invalid_transition');
+      const simulatesOwner = scenario === 'handover' && action === 'place' && transfer?.owner_id === demoOwner
+        && transfer.recipient_id === guest && transfer.status === 'confirmed';
+      if (!simulatesOwner && !allowedActions(transfer, guest).includes(action)) throw new Error('invalid_transition');
       const item = data.listings.find(row => row.id === transfer.listing_id);
       if (action === 'cancel' && transfer.status !== 'proposed') item.status = 'closed';
       if (action === 'accept') item.status = 'reserved';
@@ -80,8 +94,13 @@ function unwrap(result) {
 }
 
 export async function connectRepository() {
-  const test = new URLSearchParams(location.search).get('test');
-  if (testModes.includes(test)) return demoRepository(test);
+  const params = new URLSearchParams(location.search);
+  const test = params.get('test');
+  if (testModes.includes(test)) {
+    const startItemId = test === 'handover' && seedListings.find(row => row.id === params.get('item') && row.kind === 'offer')?.id;
+    const startAtListings = test === 'retrieval' && params.get('start') === 'my';
+    return demoRepository(test, startItemId, startAtListings);
+  }
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();
   const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
   if (!url && !key) return demoRepository(null);
@@ -104,7 +123,6 @@ export async function connectRepository() {
       const listings = [...new Map([...feed, ...mine].map(row => [row.id, row])).values()];
       return { listings, handovers, messages };
     },
-    seedRecovery: () => call('seed_recovery'),
     saveListing: (id, payload) => call('save_listing', { listing_id: id, payload }),
     propose: (id, plan) => call('propose_handover', { listing_id: id, ...plan }),
     changeHandover: (id, action) => call('change_handover', { handover_id: id, action }),
