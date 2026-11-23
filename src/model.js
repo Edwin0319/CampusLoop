@@ -1,7 +1,8 @@
 export const categories = ['study', 'home', 'electronics'];
 export const conditions = ['newCondition', 'good', 'fair', 'unknown'];
 export const places = ['library', 'college', 'studentCentre'];
-export const testModes = ['discovery', 'recovery', 'retrieval', 'handover'];
+export const handoverPlaceLabel = (place, translate) => places.includes(place) ? translate(place) : place;
+export const testModes = ['discovery', 'recovery', 'retrieval', 'handover', 'reply'];
 export const activeStatuses = ['proposed', 'confirmed', 'awaiting'];
 export const sampleId = 'e95eefad-1d61-478d-b80b-00f5683bfdc7';
 export const emptySlot = () => ({ date: '', start: '', end: '' });

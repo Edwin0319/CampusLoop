@@ -6,9 +6,9 @@ const guest = 'local-guest';
 const demoOwner = 'demo-owner';
 
 function demoRepository(scenario, startItemId, startAtListings = false) {
-  let data = { listings: structuredClone(seedListings), handovers: [], messages: [] };
+  let data = { listings: structuredClone(seedListings), handovers: [], messages: [], replies: [] };
   if (!scenario) {
-    try { data = JSON.parse(localStorage.getItem(storageKey)) ?? data; } catch { /* Browser storage is optional. */ }
+    try { data = { ...data, ...JSON.parse(localStorage.getItem(storageKey)) }; } catch { /* Browser storage is optional. */ }
   }
 
   function persist() {
@@ -32,6 +32,16 @@ function demoRepository(scenario, startItemId, startAtListings = false) {
   return {
     source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId, startAtListings,
     async read() { return structuredClone(data); },
+    async sendReply(id, offer) {
+      const request = data.listings.find(row => row.id === id && row.kind === 'request' && row.status === 'available'
+        && row.audience === 'campus' && row.owner_id !== guest);
+      if (!request) throw new Error('request_unavailable');
+      const replyId = crypto.randomUUID();
+      data.replies.unshift({ id: replyId, request_id: id, request_title: request.title, requester_name: request.display_name,
+        requester_id: request.owner_id, sender_id: guest, mode: request.mode, ...offer });
+      persist();
+      return replyId;
+    },
     async saveListing(id, payload) {
       const item = id && data.listings.find(row => row.id === id && row.owner_id === guest);
       if (id && (!item || item.status !== 'available' || data.handovers.some(row => row.listing_id === id && activeStatuses.includes(row.status)))) {
@@ -97,7 +107,8 @@ export async function connectRepository() {
   const params = new URLSearchParams(location.search);
   const test = params.get('test');
   if (testModes.includes(test)) {
-    const startItemId = test === 'handover' && seedListings.find(row => row.id === params.get('item') && row.kind === 'offer')?.id;
+    const kind = { handover: 'offer', reply: 'request' }[test];
+    const startItemId = seedListings.find(row => row.id === params.get('item') && row.kind === kind)?.id;
     const startAtListings = test === 'retrieval' && params.get('start') === 'my';
     return demoRepository(test, startItemId, startAtListings);
   }
@@ -118,13 +129,27 @@ export async function connectRepository() {
         client.from('listings').select('*').eq('owner_id', user.id).order('created_at', { ascending: false }),
         client.from('handovers').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }),
         client.from('messages').select('*').order('created_at').order('id'),
+        client.from('request_replies').select('*').order('created_at', { ascending: false }),
       ]);
-      const [feed, mine, handovers, messages] = results.map(unwrap);
+      const [feed, mine, handovers, messages] = results.slice(0, 4).map(unwrap);
+      const replyResult = results[4];
+      const replies = ['PGRST205', '42P01'].includes(replyResult.error?.code) ? [] : unwrap(replyResult);
       const listings = [...new Map([...feed, ...mine].map(row => [row.id, row])).values()];
-      return { listings, handovers, messages };
+      return { listings, handovers, messages, replies };
+    },
+    async sendReply(id, offer) {
+      const result = await client.rpc('send_request_reply', { request_id: id, ...offer });
+      if (result.error?.code === 'PGRST202' || result.error?.code === '42P01') throw new Error('request_reply_not_ready');
+      return unwrap(result);
     },
     saveListing: (id, payload) => call('save_listing', { listing_id: id, payload }),
-    propose: (id, plan) => call('propose_handover', { listing_id: id, ...plan }),
+    async propose(id, plan) {
+      const result = await client.rpc('propose_handover', { listing_id: id, ...plan });
+      if (result.error?.code === '23514' && result.error.message.includes('"handovers_place_check"')) {
+        throw new Error('custom_place_not_ready');
+      }
+      return unwrap(result);
+    },
     changeHandover: (id, action) => call('change_handover', { handover_id: id, action }),
     relist: (id, possession) => call('relist', { listing_id: id, possession }),
     sendMessage: async (id, body) => unwrap(await client.from('messages').insert({ handover_id: id, sender_id: user.id, body })),

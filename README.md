@@ -17,7 +17,7 @@ Open the URL printed by Vite. The default local mode uses sample data and saves 
 
 In the Dashboard for the intended Supabase project:
 
-1. Open **SQL Editor**, paste the contents of [`supabase/migrations/202611220001_campus_loop.sql`](supabase/migrations/202611220001_campus_loop.sql), and run it once.
+1. Open **SQL Editor** and run the migrations in order. Run the [base schema](supabase/migrations/202611220001_campus_loop.sql) once, then apply [editable meeting places](supabase/migrations/202611230001_editable_handover_location.sql) and [private request replies](supabase/migrations/202611230002_request_replies.sql). On an existing Campus Loop database, run the two new migrations only.
 2. Run [`supabase/seed.sql`](supabase/seed.sql). It inserts seven fictional offers and requests. Running the seed again preserves the existing rows.
 3. Under **Authentication → Sign In / Providers**, enable **Allow anonymous sign-ins**. Guests get their own Supabase identity. Anyone with the demo link can be a guest, so use only fictional data in the shared demo feed. For a public demo, configure bot protection and usage limits in Supabase before inviting visitors.
 4. Copy the **Project URL** and **Publishable key** from the project's **Connect** dialog or **API Keys** settings. The frontend uses the publishable key and Supabase's access policies. Keep secret keys, database passwords, and `service_role` keys out of repository variables and browser code.
@@ -51,6 +51,8 @@ Add one of the following queries to the local URL or the GitHub Pages URL. These
 
 To practise a handover, open a sample offer and select **Try a demo handover**. The simulated owner accepts your proposal. From there you can cancel or simulate the owner handing over the item, then confirm receipt. Under **My listings**, **Try recovery after cancellation** opens a book listing that you can relist after retrieving it. Both practice flows start fresh and keep changes within your browser session.
 
-The normal Supabase version also supports posting offers and requests, private listings published to **Only me**, pickup dates and times, messages between handover participants, and a two-person handover. To try a shared handover, use one browser profile to publish a shared offer and another to propose a time. Use **Refresh** in the handover views to see the other participant's latest changes.
+To answer a request, open it and select **I have one to offer**. The reply is linked to that request and is visible only to the two participants in **Handover → Request replies**. In demo mode, the reply stays in your browser.
+
+The normal Supabase version also supports posting offers and requests, private listings published to **Only me**, pickup dates, times and locations, messages between handover participants, and a two-person handover. To try a shared handover, use one browser profile to publish a shared offer and another to propose a time. Use **Refresh** in the handover views to see the other participant's latest changes.
 
 GitHub Pages setup: [Vite static deployment](https://vite.dev/guide/static-deploy.html#github-pages) and [GitHub Actions variables](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-variables). Supabase setup: [anonymous sign-ins](https://supabase.com/docs/guides/auth/auth-anonymous) and [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security).

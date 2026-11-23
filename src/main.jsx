@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LANGS, translator } from './locales.js';
-import { activeStatuses, allowedActions, campusDate, categories, emptyListing, filterListings, listingPayload, places, possessionFor } from './model.js';
+import { activeStatuses, allowedActions, campusDate, categories, emptyListing, filterListings, handoverPlaceLabel, listingPayload, places, possessionFor } from './model.js';
 import { connectRepository } from './repository.js';
 import { Art, Button, DateLabel, Field, Heading, ListingCard, ListingDetails, ListingForm, Status } from './listings.jsx';
 import './style.css';
 
-const emptyData = { listings: [], handovers: [], messages: [] };
+const emptyData = { listings: [], handovers: [], messages: [], replies: [] };
 const initialFilters = { kind: 'offer', category: '', mode: '', query: '' };
 const actionText = { accept: 'actionAccept', place: 'actionPlace', receive: 'actionReceive', cancel: 'cancelHandover' };
 const backendErrors = { incomplete_config: 'configMissing', listing_unavailable: 'notAvailableNow',
-  past_date: 'futureTime', active_handover: 'activeHandover', listing_locked: 'activeHandover' };
+  past_date: 'futureTime', active_handover: 'activeHandover', listing_locked: 'activeHandover',
+  custom_place_not_ready: 'customPlaceNotReady', request_unavailable: 'requestUnavailable',
+  request_reply_not_ready: 'requestReplyNotReady' };
 
 function App() {
   const [lang, setLanguage] = useState(() => {
@@ -23,7 +25,8 @@ function App() {
   const [page, setPage] = useState({ name: 'discover' });
   const [filters, setFilters] = useState(initialFilters);
   const [form, setForm] = useState(null);
-  const [plan, setPlan] = useState({ pickup_date: campusDate(), pickup_time: '', place: 'library' });
+  const [plan, setPlan] = useState({ pickup_date: campusDate(), pickup_time: '', place: '', preset: '' });
+  const [placeInvalid, setPlaceInvalid] = useState(false);
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -46,8 +49,11 @@ function App() {
       setData(snapshot);
       setRepository(service);
       const practiceItem = snapshot.listings.find(row => row.id === service.startItemId);
-      if (practiceItem) startPlan(practiceItem, { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } });
-      else if (service.startAtListings) go('my');
+      if (practiceItem) {
+        const detail = { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } };
+        if (service.scenario === 'reply') go('reply', practiceItem.id, detail);
+        else startPlan(practiceItem, detail);
+      } else if (service.startAtListings) go('my');
     } catch (exception) { showError(exception, 'loadError'); }
     finally { setLoading(false); }
   }
@@ -99,20 +105,28 @@ function App() {
   }
   function startPlan(item, previous = page) {
     const suggested = item.pickup_slots.find(slot => slot.date >= campusDate());
-    setPlan({ pickup_date: suggested?.date ?? campusDate(), pickup_time: suggested?.start ?? '', place: 'library' });
+    setPlan({ pickup_date: suggested?.date ?? campusDate(), pickup_time: suggested?.start ?? '', place: '', preset: '' });
+    setPlaceInvalid(false);
     go('plan', item.id, previous);
+  }
+
+  function changePlace(place, preset = '') {
+    setPlan(current => ({ ...current, place, preset }));
+    setPlaceInvalid(false);
+    if (error === 'customPlaceNotReady') setError('');
   }
 
   const userId = repository?.userId;
   const item = data.listings.find(row => row.id === page.id);
   const transfer = data.handovers.find(row => row.id === page.id);
+  const reply = data.replies.find(row => row.id === page.id);
   const latest = item && data.handovers.find(row => row.listing_id === item.id);
   const owned = item?.owner_id === userId;
   const matching = filterListings(data.listings, filters);
   const handoverPractice = repository?.scenario === 'handover';
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
-    : ['reopen', 'reopened'].includes(page.name) ? 'my' : page.name === 'handover' ? 'inbox' : page.name;
+    : ['reopen', 'reopened'].includes(page.name) ? 'my' : ['handover', 'replyDetails'].includes(page.name) ? 'inbox' : page.name;
 
   function renderPage() {
     if (!repository) return <div className="surface stack">{loading ? <p role="status">{t('refreshing')}</p>
@@ -161,13 +175,49 @@ function App() {
           {owned && item.status === 'closed' && <Button onClick={() => go('reopen', item.id, page)}>{t('reviewReopen')}</Button>}
           {owned && item.status === 'available' && !activeStatuses.includes(latest?.status) && !item.simulated && <Button onClick={() => startForm(item)}>{t('editListing')}</Button>}
           {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled' ? 'previousHandover' : 'viewPlan')}</Button>}
-          {!owned && item.kind === 'request' && <Button onClick={() => startForm({ category: item.category, mode: item.mode })}>{t('offerToRequest')}</Button>}
+          {!owned && item.kind === 'request' && (item.simulated && repository.source === 'cloud'
+            ? <a className="button button-link" href={`?test=reply&item=${encodeURIComponent(item.id)}`}>{t('offerToRequest')}</a>
+            : <Button onClick={() => go('reply', item.id, page)}>{t('offerToRequest')}</Button>)}
           {!owned && !item.simulated && item.kind === 'offer' && !latest && repository.source === 'cloud' && <Button onClick={() => startPlan(item)}>{t('planHandover')}</Button>}
           {!owned && item.simulated && item.kind === 'offer' && !latest && item.status === 'available' && (handoverPractice
             ? <Button onClick={() => startPlan(item)}>{t('tryDemoHandover')}</Button>
             : <a className="button button-link" href={`?test=handover&item=${encodeURIComponent(item.id)}`}>{t('tryDemoHandover')}</a>)}
         </div></>;
       case 'post': return <ListingForm form={form} setForm={setForm} t={t} onReview={draft => { setForm(draft); go('review', undefined, page); }} />;
+      case 'reply': {
+        if (!item || owned || item.kind !== 'request' || item.status !== 'available') return <div className="surface">{t('requestUnavailable')}</div>;
+        return <><Heading note={`${item.title} · ${item.display_name}`}>{t('replyToRequest')}</Heading>
+          <form className="surface stack" key={item.id} onSubmit={event => {
+            event.preventDefault();
+            const values = new FormData(event.currentTarget);
+            const item_title = String(values.get('itemTitle')).trim();
+            const description = String(values.get('description')).trim();
+            if (!item_title || !description) {
+              setError('replyFieldsRequired');
+              event.currentTarget.elements[!item_title ? 'itemTitle' : 'description'].focus();
+              return;
+            }
+            const price = item.mode === 'sell' ? Number(values.get('price')) : null;
+            change(() => repository.sendReply(item.id, { item_title, description, price }),
+              id => go('replyDetails', id, { name: 'inbox' }), repository.source === 'cloud' ? 'replySent' : 'demoReplySaved');
+          }}>
+            <p className="muted">{t(repository.source === 'cloud' ? 'replyVisibility' : 'demoReplyVisibility')}</p>
+            <Field label={t('itemName')}><input name="itemTitle" required maxLength={100} /></Field>
+            <Field label={t('description')}><textarea name="description" required maxLength={1500} /></Field>
+            {item.mode === 'sell' && <Field label={t('price')}><input name="price" type="number" min="0.01" max="999999.99" step="0.01" inputMode="decimal" required /></Field>}
+            <Button type="submit" disabled={saving}>{t('sendPrivateOffer')}</Button>
+          </form></>;
+      }
+      case 'replyDetails':
+        if (!reply) return <div className="surface">{t(saving ? 'refreshing' : 'requestUnavailable')}</div>;
+        return <><Heading note={reply.request_title}>{reply.item_title}</Heading><div className="surface stack">
+          <span className="badge">{t(reply.sender_id === userId ? 'offerSent' : 'offerReceived')}</span>
+          <dl className="facts"><div><dt>{t('requests')}</dt><dd>{reply.request_title}</dd></div>
+            <div><dt>{t('requestedBy')}</dt><dd>{reply.requester_name}</dd></div>
+            <div><dt>{t('description')}</dt><dd>{reply.description}</dd></div>
+            <div><dt>{t('transferType')}</dt><dd>{reply.mode === 'free' ? t('free') : t('namedPrice', { price: reply.price })}</dd></div>
+          </dl>
+        </div><Button kind="secondary" onClick={() => go('inbox')}>{t('openRequestReplies')}</Button></>;
       case 'review': {
         const payload = listingPayload(form);
         return <><Heading>{t('reviewTitleWeb')}</Heading><div className="surface stack"><h2>{payload.title}</h2>
@@ -180,19 +230,38 @@ function App() {
         {handoverPractice && <p className="muted">{t('handoverPracticeNote')}</p>}
         <form className="surface stack" onSubmit={event => {
         event.preventDefault();
-        if (new Date(`${plan.pickup_date}T${plan.pickup_time}:00+08:00`) <= new Date()) { setError('futureTime'); return; }
-        change(() => repository.propose(page.id, plan), id => go('handover', id, { name: 'inbox' }),
+        const { pickup_date, pickup_time, preset } = plan;
+        const place = preset || plan.place.trim();
+        if (!place || place.length > 100 || /[\u0000-\u001F\u007F-\u009F]/.test(place)) {
+          setPlaceInvalid(true);
+          event.currentTarget.elements.place.focus();
+          return;
+        }
+        if (new Date(`${pickup_date}T${pickup_time}:00+08:00`) <= new Date()) { setError('futureTime'); return; }
+        change(() => repository.propose(page.id, { pickup_date, pickup_time, place }), id => go('handover', id, { name: 'inbox' }),
           handoverPractice ? 'demoAccepted' : 'proposedSaved');
       }}><div className="form-columns">
         <Field label={t('date')}><input type="date" min={campusDate()} required value={plan.pickup_date} onChange={event => setPlan({ ...plan, pickup_date: event.target.value })} /></Field>
         <Field label={t('time')}><input type="time" required value={plan.pickup_time} onChange={event => setPlan({ ...plan, pickup_time: event.target.value })} /></Field>
-      </div><Field label={t('location')}><select value={plan.place} onChange={event => setPlan({ ...plan, place: event.target.value })}>
-        {places.map(place => <option value={place} key={place}>{t(place)}</option>)}
-      </select></Field><Button type="submit" disabled={saving || !item}>{t('propose')}</Button></form></>;
+      </div><div className="place-field">
+        <Field label={t('location')}>
+          <input name="place" value={plan.preset ? t(plan.preset) : plan.place} placeholder={t('placeExample')}
+            maxLength={100} aria-required="true" aria-invalid={placeInvalid || undefined}
+            aria-describedby={placeInvalid ? 'place-error' : undefined} onChange={event => changePlace(event.target.value)} />
+        </Field>
+        {placeInvalid && <p className="field-error" role="alert" id="place-error">{t('placeRequired')}</p>}
+        <div className="place-suggestions" role="group" aria-label={t('suggestedPlaces')}>
+          {places.map(place => <button type="button" key={place} aria-pressed={plan.preset === place} onClick={() => changePlace('', place)}>{t(place)}</button>)}
+        </div>
+      </div><Button type="submit" disabled={saving || !item}>{t('propose')}</Button></form></>;
       case 'inbox': return <><Heading>{t('handover')}</Heading><Button kind="secondary" disabled={saving} onClick={refresh}>{t('refresh')}</Button>
         <div className="surface stack">{data.handovers.length ? data.handovers.map(row => <button className="conversation" type="button" key={row.id} onClick={() => go('handover', row.id, page)}>
           <strong>{row.item_title}</strong><Status value={row.status} t={t} />
-        </button>) : <p>{t('noMessages')}</p>}</div></>;
+        </button>) : <p>{t('noMessages')}</p>}</div>
+        <section className="surface stack"><h2>{t('openRequestReplies')}</h2>{data.replies.length ? data.replies.map(row =>
+          <button className="conversation" type="button" key={row.id} onClick={() => go('replyDetails', row.id, page)}>
+            <span><strong>{row.item_title}</strong> · {row.request_title}</span><span className="badge">{t(row.sender_id === userId ? 'offerSent' : 'offerReceived')}</span>
+          </button>) : <p>{t('noRequestReplies')}</p>}</section></>;
       case 'handover': {
         if (!transfer) return <div className="surface">{t('notAvailableNow')}</div>;
         const messages = data.messages.filter(row => row.handover_id === transfer.id);
@@ -201,7 +270,7 @@ function App() {
         const isActive = activeStatuses.includes(transfer.status);
         return <><Heading note={t('viewingAs', { role: t(transfer.owner_id === userId ? 'owner' : 'recipient') })}>{transfer.item_title}</Heading>
           <div className="surface stack"><Status value={transfer.status} t={t} />
-            <p><DateLabel value={transfer.pickup_date} locale={locale} /> · {transfer.pickup_time.slice(0, 5)} · {t(transfer.place)}</p>
+            <p><DateLabel value={transfer.pickup_date} locale={locale} /> · {transfer.pickup_time.slice(0, 5)} · {handoverPlaceLabel(transfer.place, t)}</p>
             <div className="button-row">{actions.map(action => <Button key={action} disabled={saving}
               kind={action === 'cancel' ? 'secondary' : 'primary'} onClick={() => {
                 if (action === 'cancel') setCancelOpen(true);
@@ -227,7 +296,7 @@ function App() {
         if (!item || !owned || item.status !== 'closed' || !latest) return <div className="surface">{t('notAvailableNow')}</div>;
         return <><Heading note={item.title}>{t('reviewReopen')}</Heading><div className="notice stack">
           <strong>{t(latest.placed ? 'retrieveFirst' : 'confirmPossessionTitle')}</strong>
-          <p>{t(latest.placed ? 'retrievalPrompt' : 'confirmPossessionBody', { place: t(latest.place) })}</p>
+          <p>{t(latest.placed ? 'retrievalPrompt' : 'confirmPossessionBody', { place: handoverPlaceLabel(latest.place, t) })}</p>
         </div><div className="surface"><ListingDetails item={item} t={t} locale={locale} /></div>
           <div className="button-row"><Button kind="secondary" disabled={saving} onClick={() => go('my')}>{t('keepClosed')}</Button>
             <Button disabled={saving} onClick={() => change(() => repository.relist(item.id, possessionFor(latest)),
@@ -259,8 +328,10 @@ function App() {
     </header>
     <main className="workspace stack" ref={main} tabIndex={-1}>
       <div className="section-row top-line">
-        {!isRoot && <Button kind="quiet" disabled={saving} onClick={() => go(page.previous?.name ?? 'discover', page.previous?.id, page.previous?.previous)}>{t('back')}</Button>}
-        {(handoverPractice || repository?.startAtListings) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
+        {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={() => go(page.previous?.name ?? 'discover', page.previous?.id, page.previous?.previous)}>
+          <span aria-hidden="true">←</span>
+        </Button>}
+        {(handoverPractice || repository?.scenario === 'reply' || repository?.startAtListings) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
         {mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}
