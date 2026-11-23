@@ -49,7 +49,7 @@ Add one of the following queries to the local URL or the GitHub Pages URL. These
 | `?test=recovery` | In **Handover**, open the cancelled handover for **Introduction to Algorithms**. Confirm the book is still with the owner to relist it. The previous conversation remains accessible. |
 | `?test=retrieval` | Repeat the second task with the book at the library pickup point. Keep the listing closed until the scenario states that the book has been retrieved, then reopen it. |
 
-To practise a handover, open a sample offer and select **Try a demo handover**. The simulated owner accepts your proposal. From there you can cancel or simulate the owner handing over the item, then confirm receipt. Under **Handover**, **Try the relisting demo** opens a cancelled handover. Open the record to see the previous conversation and relist after retrieving the item. Select **Reset demo** to return to the cancelled handover with the sample listing closed. Changes in these practice flows stay within your browser session.
+To practise a handover, open a sample offer and select **Try a demo handover**. The simulated owner accepts your proposal. From there you can cancel or simulate the owner handing over the item, then confirm receipt. Under **Handover**, **Try the relisting demo** opens the cancelled record directly, including the previous conversation and the option to review and relist. Select **Reset demo** to reopen that record with the sample listing closed. Changes in these practice flows stay within your browser session.
 
 To answer a request, open it and select **I have one to offer**. The reply is linked to that request and is visible only to the two participants in **Handover → Request replies**. In demo mode, the reply stays in your browser.
 

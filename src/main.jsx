@@ -53,7 +53,11 @@ function App() {
         const detail = { name: 'detail', id: practiceItem.id, previous: { name: 'discover' } };
         if (service.scenario === 'reply') go('reply', practiceItem.id, detail);
         else startPlan(practiceItem, detail);
-      } else if (service.startAtHandovers) go('inbox');
+      } else if (service.relistingPractice) {
+        const cancelled = snapshot.handovers.find(transfer => transfer.status === 'cancelled');
+        if (cancelled) go('handover', cancelled.id, { name: 'inbox' });
+        else go('inbox');
+      }
     } catch (exception) { showError(exception, 'loadError'); }
     finally { setLoading(false); }
   }
@@ -129,7 +133,7 @@ function App() {
   const owned = item?.owner_id === userId;
   const matching = filterListings(data.listings, filters, userId);
   const handoverPractice = repository?.scenario === 'handover';
-  const relistingPractice = repository?.startAtHandovers;
+  const relistingPractice = repository?.relistingPractice;
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
     : ['handover', 'replyDetails', 'reopen', 'reopened'].includes(page.name) ? 'inbox' : page.name;
@@ -344,7 +348,7 @@ function App() {
         {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={goBack}>
           <span aria-hidden="true">←</span>
         </Button>}
-        {(handoverPractice || repository?.scenario === 'reply' || relistingPractice) && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
+        {(handoverPractice || repository?.scenario === 'reply') && <a className="button quiet button-link" href="./">{t('exitPractice')}</a>}
         {relistingPractice ? <div className="button-row practice-tools">
           <p className="mode-label">{t('relistingPracticeMode')}</p>
           <Button kind="secondary" onClick={() => window.location.reload()}>{t('resetRelistingDemo')}</Button>

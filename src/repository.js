@@ -5,7 +5,7 @@ const storageKey = 'campus-loop-web-v1';
 const guest = 'local-guest';
 const demoOwner = 'demo-owner';
 
-function demoRepository(scenario, startItemId, startAtHandovers = false) {
+function demoRepository(scenario, startItemId, relistingPractice = false) {
   let data = { listings: structuredClone(seedListings), handovers: [], messages: [], replies: [] };
   if (!scenario) {
     try { data = { ...data, ...JSON.parse(localStorage.getItem(storageKey)) }; } catch { /* Browser storage is optional. */ }
@@ -30,7 +30,7 @@ function demoRepository(scenario, startItemId, startAtHandovers = false) {
 
   if (['recovery', 'retrieval'].includes(scenario)) seedRecovery();
   return {
-    source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId, startAtHandovers,
+    source: scenario ? 'scenario' : 'local', userId: guest, scenario, startItemId, relistingPractice,
     async read() { return structuredClone(data); },
     async sendReply(id, offer) {
       const request = data.listings.find(row => row.id === id && row.kind === 'request' && row.status === 'available'
@@ -109,8 +109,8 @@ export async function connectRepository() {
   if (testModes.includes(test)) {
     const kind = { handover: 'offer', reply: 'request' }[test];
     const startItemId = seedListings.find(row => row.id === params.get('item') && row.kind === kind)?.id;
-    const startAtHandovers = test === 'retrieval' && ['handover', 'my'].includes(params.get('start'));
-    return demoRepository(test, startItemId, startAtHandovers);
+    const relistingPractice = test === 'retrieval' && ['handover', 'my'].includes(params.get('start'));
+    return demoRepository(test, startItemId, relistingPractice);
   }
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();
   const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
