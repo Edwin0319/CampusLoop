@@ -122,7 +122,7 @@ function App() {
   const reply = data.replies.find(row => row.id === page.id);
   const latest = item && data.handovers.find(row => row.listing_id === item.id);
   const owned = item?.owner_id === userId;
-  const matching = filterListings(data.listings, filters);
+  const matching = filterListings(data.listings, filters, userId);
   const handoverPractice = repository?.scenario === 'handover';
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'

@@ -8,6 +8,13 @@ test('discovery combines a search, category, transfer mode, and visibility', () 
   const hidden = { ...seedListings.find(item => item.kind === 'request'), id: 'private', audience: 'private' };
   const rows = filterListings([...seedListings, hidden], { kind: 'request', category: 'study', mode: 'free', query: '  dÉsk  lamp  ' });
   assert.deepEqual(rows.map(item => item.title), ['Free desk lamp for studying']);
+  for (const kind of ['offer', 'request']) {
+    const sample = seedListings.find(item => item.kind === kind);
+    const ownPost = { ...sample, id: 'own-post', owner_id: 'student-a', simulated: false };
+    const filters = { kind, category: sample.category, mode: sample.mode, query: sample.title };
+    assert.deepEqual(filterListings([ownPost, sample], filters, 'student-a').map(item => item.id), [sample.id]);
+    assert.deepEqual(filterListings([ownPost, sample], filters, 'student-b').map(item => item.id), ['own-post', sample.id]);
+  }
   assert.equal(validSlot({ date: '2026-02-29', start: '19:00', end: '20:00' }), false);
   assert.equal(validSlot({ date: '2028-02-29', start: '19:00', end: '20:00' }), true);
   assert.equal(validSlot({ date: '2028-02-29', start: '20:00', end: '19:00' }), false);

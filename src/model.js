@@ -28,10 +28,10 @@ export function validSlot(slot) {
 }
 
 const normalize = text => text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().trim().replace(/\s+/g, ' ');
-export function filterListings(rows, { kind, category, mode, query }) {
+export function filterListings(rows, { kind, category, mode, query }, viewerId) {
   const terms = normalize(query).split(' ').filter(Boolean);
   return rows.filter(row => {
-    if (row.kind !== kind || row.status !== 'available' || row.audience !== 'campus'
+    if ((viewerId && row.owner_id === viewerId) || row.kind !== kind || row.status !== 'available' || row.audience !== 'campus'
         || (category && row.category !== category) || (mode && row.mode !== mode)) return false;
     const haystack = normalize([row.title, row.description, row.display_name, row.search_terms].filter(Boolean).join(' '));
     return terms.every(term => haystack.includes(term));
