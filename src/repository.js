@@ -35,14 +35,31 @@ function reopenListing(listing, handover, possession) {
 }
 
 const sampleDeletedKey = 'campus-loop-sample-deleted';
+const dataModeKey = 'campus-loop-data-mode';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
+
+// The shared Supabase data and the browser-only demo can both be used only when Supabase is configured.
+export const canSwitchDataMode = Boolean(supabaseUrl && supabaseKey);
+
+// Remembers which data the app opens with, so the choice survives reloads without a URL parameter.
+export function chooseDataMode(mode) {
+  try { localStorage.setItem(dataModeKey, mode); } catch { /* Without storage the choice lasts for this page only. */ }
+}
+
+function savedDataMode() {
+  try { return localStorage.getItem(dataModeKey); } catch { return null; }
+}
 
 function withRelistingSample(repository) {
   const sample = createRelistingSample(repository.userId, true);
+  // Each data mode hides its own copy of the sample, so deleting it in one mode does not hide it in the other.
+  const deletedKey = repository.source === 'local' ? `${sampleDeletedKey}-local` : sampleDeletedKey;
   let sampleDeleted = false;
-  try { sampleDeleted = localStorage.getItem(sampleDeletedKey) === '1'; } catch { /* Browser storage is optional. */ }
+  try { sampleDeleted = localStorage.getItem(deletedKey) === '1'; } catch { /* Browser storage is optional. */ }
   function setSampleDeleted(value) {
     sampleDeleted = value;
-    try { if (value) localStorage.setItem(sampleDeletedKey, '1'); else localStorage.removeItem(sampleDeletedKey); }
+    try { if (value) localStorage.setItem(deletedKey, '1'); else localStorage.removeItem(deletedKey); }
     catch { /* The sample stays hidden for this session. */ }
   }
   return {
@@ -293,11 +310,18 @@ export async function connectRepository() {
     const relistingPractice = test === 'retrieval' && ['handover', 'my'].includes(params.get('start'));
     return demoRepository(test, startItemId, relistingPractice);
   }
-  // ?demo=local forces the browser-only demo, which has the simulate controls, even when Supabase is configured.
-  const forceLocal = params.get('demo') === 'local';
-  const url = import.meta.env.VITE_SUPABASE_URL?.trim();
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  if (forceLocal || (!url && !key)) return withRelistingSample(demoRepository(null));
+  // ?demo=local or ?demo=cloud saves that choice, then is removed so later reloads keep using the saved choice.
+  const requested = params.get('demo');
+  if (['local', 'cloud'].includes(requested)) {
+    chooseDataMode(requested);
+    params.delete('demo');
+    const query = params.toString();
+    history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`);
+  }
+  const url = supabaseUrl;
+  const key = supabaseKey;
+  // The browser-only demo has the simulate controls; it is used when chosen or when Supabase is not configured.
+  if ((!url && !key) || (canSwitchDataMode && savedDataMode() === 'local')) return withRelistingSample(demoRepository(null));
   if (!url || !key) throw new Error('incomplete_config');
   const client = createClient(url, key);
   const { session } = unwrap(await client.auth.getSession());

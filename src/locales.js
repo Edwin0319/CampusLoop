@@ -75,6 +75,7 @@ Object.assign(COPY, {
   appIntro: ['Find a new home for useful things at UM.', '為有用的物品在澳大找個新主人。', '为有用的物品在澳大找个新主人。', 'Encontre um novo dono para artigos úteis na UM.'],
   localMode: ['Local demo · Saved in this browser', '本機示範 · 資料儲存於此瀏覽器', '本地演示 · 数据保存在此浏览器', 'Demonstração local · Guardado neste navegador'],
   scenarioMode: ['Usability test · Simulated data', '可用性測試 · 模擬資料', '可用性测试 · 模拟数据', 'Teste de usabilidade · Dados simulados'],
+  dataMode: ['Data', '資料', '数据', 'Dados'],
   cloudMode: ['Shared demo · Supabase', '共用示範 · Supabase', '共享演示 · Supabase', 'Demonstração partilhada · Supabase'],
   simulatedData: ['Sample', '示範資料', '演示数据', 'Exemplo'],
   refreshing: ['Loading…', '載入中…', '正在加载…', 'A carregar…'],

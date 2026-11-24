@@ -44,6 +44,8 @@ small,.muted{color:var(--muted);font-size:.85rem}
 .hero p:last-child{color:#ecf5ec}
 .mode-label{color:var(--muted);font-size:.8rem;margin-left:auto;text-align:right}
 .top-line{min-height:24px}
+.mode-switch{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.8rem;min-width:0}
+.mode-switch select{min-width:0;max-width:100%;padding:6px 8px;border:1px solid #95a99c;border-radius:9px;background:#fff;color:var(--deep);font-size:.8rem}
 .section-row,.button-row,.badges{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .section-row{justify-content:space-between}
 .section-heading{display:grid;gap:6px;padding:4px 0 2px}

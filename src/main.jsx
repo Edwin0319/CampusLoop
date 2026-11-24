@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LANGS, translator } from './locales.js';
 import { activeStatuses, allowedActions, campusDate, conditions, slotEnded, emptyListing, filterListings, handoverPlaceLabel, listingPayload, places, possessionFor } from './model.js';
-import { connectRepository } from './repository.js';
+import { canSwitchDataMode, chooseDataMode, connectRepository } from './repository.js';
 import { Art, Button, CategoryPicker, CollegeSelect, ConditionFacts, ConditionSelect, DateLabel, DefectsField, Field, Heading, ListingCard, ListingDetails, ListingForm, Status } from './listings.jsx';
 import './style.css';
 
@@ -66,6 +66,12 @@ function App() {
   }
 
   useEffect(() => { connect(); }, []);
+
+  // Reloading opens the app fresh with the chosen data; each mode keeps its own data, so nothing is lost.
+  function switchDataMode(value) {
+    chooseDataMode(value);
+    location.reload();
+  }
   useEffect(() => {
     document.documentElement.lang = LANGS[lang].html;
     try { localStorage.setItem('campus-loop-language', lang); } catch { /* Language still works in this session. */ }
@@ -516,7 +522,14 @@ function App() {
         {!isRoot && <Button kind="quiet back-button" aria-label={t('back')} disabled={saving} onClick={goBack}>
           <span aria-hidden="true">←</span>
         </Button>}
-        {mode && <p className="mode-label">{t(mode)}</p>}
+        {canSwitchDataMode && !loading && repository?.source !== 'scenario'
+          ? <label className="mode-switch"><span>{t('dataMode')}</span>
+            <select value={repository?.source === 'local' ? 'local' : 'cloud'} disabled={saving}
+              onChange={event => switchDataMode(event.target.value)}>
+              <option value="cloud">{t('cloudMode')}</option>
+              <option value="local">{t('localMode')}</option>
+            </select></label>
+          : mode && <p className="mode-label">{t(mode)}</p>}
       </div>
       {error && <p className="notice error" role="alert">{t(error)}</p>}
       {/* The live region stays mounted so screen readers announce new notices; it sits at the top so it is seen. */}
