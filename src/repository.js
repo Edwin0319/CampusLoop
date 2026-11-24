@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import { activeStatuses, allowedActions, campusDate, colleges, normalizeCondition, possessionFor, slotEnded, reachable, sampleId, sampleListing, seedListings, testModes } from './model.js';
 
 const storageKey = 'campus-loop-web-v1';
@@ -84,7 +83,8 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
   }
 
   function persist() {
-    if (!scenario) localStorage.setItem(storageKey, JSON.stringify(data));
+    if (scenario) return;
+    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch { /* Without storage, changes last until reload. */ }
   }
 
   const recoverySample = ['recovery', 'retrieval'].includes(scenario)
@@ -279,11 +279,6 @@ function demoRepository(scenario, startItemId, relistingPractice = false) {
   };
 }
 
-function unwrap(result) {
-  if (result.error) throw new Error(result.error.code === '23505' ? 'active_handover' : result.error.message);
-  return result.data;
-}
-
 export async function connectRepository() {
   const params = new URLSearchParams(location.search);
   const test = params.get('test');
@@ -293,82 +288,6 @@ export async function connectRepository() {
     const relistingPractice = test === 'retrieval' && ['handover', 'my'].includes(params.get('start'));
     return demoRepository(test, startItemId, relistingPractice);
   }
-  // ?demo=local forces the browser-only demo, which has the simulate controls, even when Supabase is configured.
-  const forceLocal = params.get('demo') === 'local';
-  const url = import.meta.env.VITE_SUPABASE_URL?.trim();
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  if (forceLocal || (!url && !key)) return withRelistingSample(demoRepository(null));
-  if (!url || !key) throw new Error('incomplete_config');
-  const client = createClient(url, key);
-  const { session } = unwrap(await client.auth.getSession());
-  const user = session?.user ?? unwrap(await client.auth.signInAnonymously()).user;
-  if (!user) throw new Error('not_authenticated');
-  const call = async (name, args) => unwrap(await client.rpc(name, args));
-  return withRelistingSample({
-    source: 'cloud', userId: user.id,
-    async read() {
-      const results = await Promise.all([
-        client.from('listings').select('*').eq('status', 'available').in('audience', ['campus', 'college']).order('created_at', { ascending: false }).limit(150),
-        client.from('listings').select('*').eq('owner_id', user.id).order('created_at', { ascending: false }),
-        client.from('handovers').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }),
-        client.from('messages').select('*').order('created_at').order('id'),
-        client.from('request_replies').select('*').order('created_at', { ascending: false }),
-        client.from('profiles').select('college').eq('user_id', user.id).maybeSingle(),
-      ]);
-      const [feed, mine, handovers, messages] = results.slice(0, 4).map(unwrap);
-      const replyResult = results[4];
-      const replies = ['PGRST205', '42P01'].includes(replyResult.error?.code) ? [] : unwrap(replyResult);
-      // The other participant's listing is no longer in the feed once reserved; load it so both see the same terms.
-      const missing = [...new Set(handovers.map(row => row.listing_id))].filter(id => ![...feed, ...mine].some(row => row.id === id));
-      const shared = missing.length ? (await client.from('listings').select('*').in('id', missing)).data ?? [] : [];
-      const listings = [...new Map([...feed, ...mine, ...shared].map(row => [row.id, row])).values()];
-      // Before the college migration runs there is no profiles table; the app then behaves as if no college was chosen.
-      const profileResult = results[5];
-      const profile = { college: ['PGRST205', '42P01'].includes(profileResult.error?.code) ? '' : unwrap(profileResult)?.college ?? '' };
-      return { listings, handovers, messages, replies, profile };
-    },
-    async sendReply(id, offer) {
-      const result = await client.rpc('send_request_reply', { request_id: id, ...offer });
-      if (result.error?.code === 'PGRST202' || result.error?.code === '42P01') throw new Error('request_reply_not_ready');
-      return unwrap(result);
-    },
-    async withdrawReply(id) {
-      const result = await client.rpc('withdraw_request_reply', { reply_id: id });
-      if (result.error?.code === 'PGRST202') throw new Error('withdraw_not_ready');
-      unwrap(result);
-    },
-    async setCollege(college) {
-      const result = await client.rpc('set_college', { college: college || '' });
-      if (result.error?.code === 'PGRST202') throw new Error('college_not_ready');
-      unwrap(result);
-    },
-    async saveListing(id, payload) {
-      if (payload.audience === 'college') {
-        const { error } = await client.from('listings').select('college').limit(0);
-        if (['42703', 'PGRST204'].includes(error?.code)) throw new Error('college_not_ready');
-        if (error) unwrap({ error });
-      }
-      if (payload.categories.length > 1 || !['study', 'home', 'electronics'].includes(payload.category)) {
-        const { error } = await client.from('listings').select('categories').limit(0);
-        if (['42703', 'PGRST204'].includes(error?.code)) throw new Error('categories_not_ready');
-        if (error) unwrap({ error });
-      }
-      return call('save_listing', { listing_id: id, payload });
-    },
-    async deleteListing(id) {
-      const result = await client.rpc('delete_listing', { listing_id: id });
-      if (result.error?.code === 'PGRST202') throw new Error('delete_not_ready');
-      unwrap(result);
-    },
-    async propose(id, plan) {
-      const result = await client.rpc('propose_handover', { listing_id: id, ...plan });
-      if (result.error?.code === '23514' && result.error.message.includes('"handovers_place_check"')) {
-        throw new Error('custom_place_not_ready');
-      }
-      return unwrap(result);
-    },
-    changeHandover: (id, action) => call('change_handover', { handover_id: id, action }),
-    relist: (id, possession) => call('relist', { listing_id: id, possession }),
-    sendMessage: async (id, body) => unwrap(await client.from('messages').insert({ handover_id: id, sender_id: user.id, body })),
-  });
+  // All data is kept in this browser; there is no server.
+  return withRelistingSample(demoRepository(null));
 }

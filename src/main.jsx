@@ -9,12 +9,9 @@ import './style.css';
 const emptyData = { listings: [], handovers: [], messages: [], replies: [], profile: { college: '' } };
 const initialFilters = { kind: 'offer', categories: [], mode: '', query: '' };
 const actionText = { accept: 'actionAccept', hand: 'actionHand', place: 'actionPlace', receive: 'actionReceive', cancel: 'cancelHandover' };
-const backendErrors = { incomplete_config: 'configMissing', listing_unavailable: 'notAvailableNow',
+const backendErrors = { listing_unavailable: 'notAvailableNow',
   past_date: 'futureTime', active_handover: 'activeHandover', listing_locked: 'activeHandover',
-  custom_place_not_ready: 'customPlaceNotReady', request_unavailable: 'requestUnavailable',
-  request_reply_not_ready: 'requestReplyNotReady', categories_not_ready: 'categoriesNotReady', delete_not_ready: 'deleteNotReady',
-  withdraw_not_ready: 'withdrawNotReady', reply_in_handover: 'replyInHandover',
-  college_required: 'collegeRequired', college_not_ready: 'collegeNotReady' };
+  request_unavailable: 'requestUnavailable', reply_in_handover: 'replyInHandover', college_required: 'collegeRequired' };
 
 function App() {
   const [lang, setLanguage] = useState(() => {
@@ -137,7 +134,6 @@ function App() {
   function changePlace(place, preset = '') {
     setPlan(current => ({ ...current, place, preset }));
     setPlaceInvalid(false);
-    if (error === 'customPlaceNotReady') setError('');
   }
 
   const userId = repository?.userId;
@@ -146,15 +142,15 @@ function App() {
   const reply = data.replies.find(row => row.id === page.id);
   const replyTransfer = reply && data.handovers.find(row => row.reply_id === reply.id);
   const replyRequest = reply && data.listings.find(row => row.id === reply.request_id);
-  const demoReply = repository?.source === 'local' && reply?.sender_id === userId && !!replyRequest?.simulated;
-  const receivedDemoReply = repository?.source === 'local' && reply?.requester_id === userId && !!reply?.simulated;
+  const demoReply = !repository?.scenario && reply?.sender_id === userId && !!replyRequest?.simulated;
+  const receivedDemoReply = !repository?.scenario && reply?.requester_id === userId && !!reply?.simulated;
   const latest = item && data.handovers.find(row => row.listing_id === item.id);
   const owned = item?.owner_id === userId;
   const viewerCollege = data.profile?.college ?? '';
   const matching = filterListings(data.listings, filters, userId, viewerCollege);
   const saveCollege = value => change(() => repository.setCollege(value), null, 'collegeSaved');
-  // Demo handovers run in place (and are saved) in local mode; the cloud version still opens the separate test page.
-  const canPractise = !!repository && repository.source !== 'cloud' && (!repository.scenario || repository.scenario === 'handover');
+  // Demo handovers run in place and are saved; the other usability scenarios open the separate handover test page.
+  const canPractise = !!repository && (!repository.scenario || repository.scenario === 'handover');
   const isRoot = ['discover', 'my', 'inbox'].includes(page.name);
   const activeTab = page.name === 'post' || page.name === 'review' ? 'post'
     : ['handover', 'replyDetails', 'replyPlan', 'reopen', 'reopened'].includes(page.name) ? 'inbox' : page.name;
@@ -184,7 +180,7 @@ function App() {
   }
 
   function postDemoControls(row) {
-    if (repository?.source !== 'local' || row.owner_id !== userId || row.simulated || row.status !== 'available'
+    if (!repository || repository.scenario || row.owner_id !== userId || row.simulated || row.status !== 'available'
       || data.handovers.some(h => h.listing_id === row.id && activeStatuses.includes(h.status))) return null;
     if (row.audience === 'private') return <p className="muted">{t('privateNoDemo')}</p>;
     const isOffer = row.kind === 'offer';
@@ -203,7 +199,7 @@ function App() {
     const questionId = `withdraw-ask-${row.id}`;
     return <div className="notice stack" role="group" aria-labelledby={questionId}>
       <strong id={questionId}>{t('withdrawAsk', { title: row.item_title })}</strong>
-      <p>{t(repository.source === 'cloud' ? 'withdrawWarning' : 'withdrawDemoWarning')}</p>
+      <p>{t('withdrawDemoWarning')}</p>
       <div className="button-row">
         <Button kind="secondary" autoFocus disabled={saving} onClick={() => setWithdrawId(null)}>{t('keepReply')}</Button>
         <Button kind="danger" disabled={saving} onClick={() => change(() => repository.withdrawReply(row.id),
@@ -294,10 +290,7 @@ function App() {
           {owned && item.status === 'available' && !activeStatuses.includes(latest?.status) && !item.simulated && <Button onClick={() => startForm(item)}>{t('editListing')}</Button>}
           {latest && <Button kind="secondary" onClick={() => go('handover', latest.id, page)}>{t(latest.status === 'cancelled'
             ? (item.status === 'closed' ? 'viewCancelledHandover' : 'previousHandover') : 'viewPlan')}</Button>}
-          {!owned && item.kind === 'request' && (item.simulated && repository.source === 'cloud'
-            ? <a className="button button-link" href={`?test=reply&item=${encodeURIComponent(item.id)}`}>{t('offerToRequest')}</a>
-            : <Button onClick={() => go('reply', item.id, page)}>{t('offerToRequest')}</Button>)}
-          {!owned && !item.simulated && item.kind === 'offer' && !latest && repository.source === 'cloud' && <Button onClick={() => startPlan(item)}>{t('planHandover')}</Button>}
+          {!owned && item.kind === 'request' && <Button onClick={() => go('reply', item.id, page)}>{t('offerToRequest')}</Button>}
           {!owned && item.simulated && item.kind === 'offer' && !latest && item.status === 'available' && (canPractise
             ? <Button onClick={() => startPlan(item)}>{t('tryDemoHandover')}</Button>
             : <a className="button button-link" href={`?test=handover&item=${encodeURIComponent(item.id)}`}>{t('tryDemoHandover')}</a>)}
@@ -330,9 +323,9 @@ function App() {
               return;
             }
             change(() => repository.sendReply(item.id, { item_title, description, price, condition, defects }),
-              id => go('replyDetails', id, { name: 'inbox' }), repository.source === 'cloud' ? 'replySent' : 'demoReplySaved');
+              id => go('replyDetails', id, { name: 'inbox' }), 'demoReplySaved');
           }}>
-            <p className="muted">{t(repository.source === 'cloud' ? 'replyVisibility' : 'demoReplyVisibility')}</p>
+            <p className="muted">{t('demoReplyVisibility')}</p>
             <Field label={t('itemName')}><input name="itemTitle" required maxLength={100} /></Field>
             <Field label={t('description')}><textarea name="description" required maxLength={1500} /></Field>
             <div className="form-columns">
@@ -495,7 +488,7 @@ function App() {
     }
   }
 
-  const mode = repository && { local: 'localMode', scenario: 'scenarioMode', cloud: 'cloudMode' }[repository.source];
+  const mode = repository && { local: 'localMode', scenario: 'scenarioMode' }[repository.source];
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand-block"><span className="brand-mark" aria-hidden="true">↻</span><span className="brand">Campus Loop</span></div>
