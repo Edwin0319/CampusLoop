@@ -293,9 +293,11 @@ export async function connectRepository() {
     const relistingPractice = test === 'retrieval' && ['handover', 'my'].includes(params.get('start'));
     return demoRepository(test, startItemId, relistingPractice);
   }
+  // ?demo=local forces the browser-only demo, which has the simulate controls, even when Supabase is configured.
+  const forceLocal = params.get('demo') === 'local';
   const url = import.meta.env.VITE_SUPABASE_URL?.trim();
   const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim();
-  if (!url && !key) return withRelistingSample(demoRepository(null));
+  if (forceLocal || (!url && !key)) return withRelistingSample(demoRepository(null));
   if (!url || !key) throw new Error('incomplete_config');
   const client = createClient(url, key);
   const { session } = unwrap(await client.auth.getSession());
